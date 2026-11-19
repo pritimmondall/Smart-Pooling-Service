@@ -28,6 +28,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
     contentSecurityPolicy: {
       directives: {
         connectSrc: ["'self'", 'https://nominatim.openstreetmap.org'],
@@ -36,9 +37,37 @@ export function createApp() {
       },
     },
   }));
+
+  const parseAllowedOrigins = (raw) => {
+    if (!raw) return ['http://localhost:5173'];
+    return raw
+      .split(',')
+      .map((s) => s.trim().replace(/\/+$/, ''))
+      .filter(Boolean);
+  };
+  const allowedOrigins = parseAllowedOrigins(env.clientOrigin);
+
   app.use(
     cors({
-      origin: env.clientOrigin,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, uptime/health checks)
+        if (!origin) return callback(null, true);
+        const cleanOrigin = origin.replace(/\/+$/, '');
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(cleanOrigin)) {
+          return callback(null, true);
+        }
+        const isMatch = allowedOrigins.some((allowed) => {
+          if (allowed.includes('*')) {
+            const regex = new RegExp('^' + allowed.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+            return regex.test(cleanOrigin);
+          }
+          return false;
+        });
+        if (isMatch) {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      },
       credentials: true,
     })
   );

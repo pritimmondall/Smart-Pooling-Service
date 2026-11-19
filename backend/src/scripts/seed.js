@@ -92,9 +92,10 @@ async function upsertUser({ name, email, phone, password, role }) {
     name,
     email,
     phone,
-    passwordHash: process.env.NODE_ENV === 'production'
-      ? process.env[`SEED_${role.toUpperCase()}_PASSWORD`]
-      : password,
+    passwordHash:
+      process.env.NODE_ENV === 'production'
+        ? process.env[`SEED_${role.toUpperCase()}_PASSWORD`] || password
+        : password,
     role,
     isActive: true,
   });

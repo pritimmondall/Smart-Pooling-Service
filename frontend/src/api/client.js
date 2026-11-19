@@ -1,5 +1,10 @@
-const BASE_URL =
-  import.meta.env?.VITE_API_BASE_URL || '/api/v1';
+const rawBaseUrl = import.meta.env?.VITE_API_BASE_URL;
+const normalizeBaseUrl = (url) => {
+  if (!url) return '/api/v1';
+  const trimmed = url.replace(/\/+$/, '');
+  return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`;
+};
+const BASE_URL = normalizeBaseUrl(rawBaseUrl);
 
 export class ApiError extends Error {
   constructor(message, code = 'API_ERROR', status = 500, details = undefined) {
