@@ -47,30 +47,48 @@ export function createApp() {
   };
   const allowedOrigins = parseAllowedOrigins(env.clientOrigin);
 
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. mobile apps, curl, uptime/health checks)
-        if (!origin) return callback(null, true);
-        const cleanOrigin = origin.replace(/\/+$/, '');
-        if (allowedOrigins.includes('*') || allowedOrigins.includes(cleanOrigin)) {
-          return callback(null, true);
-        }
-        const isMatch = allowedOrigins.some((allowed) => {
-          if (allowed.includes('*')) {
-            const regex = new RegExp('^' + allowed.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
-            return regex.test(cleanOrigin);
-          }
-          return false;
-        });
-        if (isMatch) {
-          return callback(null, true);
-        }
-        return callback(null, false);
-      },
-      credentials: true,
-    })
-  );
+  const isOriginAllowed = (origin) => {
+    // Allow requests with no origin (e.g. mobile apps, curl, uptime/health checks)
+    if (!origin) return true;
+    const cleanOrigin = origin.replace(/\/+$/, '');
+    if (allowedOrigins.includes('*') || allowedOrigins.includes(cleanOrigin)) {
+      return true;
+    }
+    // Automatically allow all Vercel deployment domains and local development
+    try {
+      const url = new URL(cleanOrigin);
+      if (
+        url.hostname.endsWith('.vercel.app') ||
+        url.hostname === 'localhost' ||
+        url.hostname === '127.0.0.1'
+      ) {
+        return true;
+      }
+    } catch {
+      // ignore URL parsing failures
+    }
+    // Support custom wildcards in allowedOrigins (e.g. *.yourdomain.com)
+    return allowedOrigins.some((allowed) => {
+      if (allowed.includes('*')) {
+        const regex = new RegExp('^' + allowed.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+        return regex.test(cleanOrigin);
+      }
+      return false;
+    });
+  };
+
+  const corsOptions = {
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+    credentials: true,
+  };
+
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
   app.use(express.json({ limit: '1mb' }));
   app.use(sanitizeRequest);
 
