@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Python (Phase 5/6)
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.joblib
+
+# Logs & OS artifacts
+logs/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

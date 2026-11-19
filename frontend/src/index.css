@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#f8fafc] text-slate-800 antialiased font-sans min-h-screen;
+    background-image: radial-gradient(at 0% 0%, rgba(220, 252, 231, 0.35) 0px, transparent 50%),
+                      radial-gradient(at 100% 100%, rgba(241, 245, 249, 0.6) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+}
+
+@layer components {
+  /* Minimal Liquid Glass Design Surface */
+  .glass-panel {
+    @apply bg-white/75 backdrop-blur-md border border-slate-200/70 shadow-sm transition-all duration-200;
+  }
+
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-md border border-slate-200/60 shadow-sm hover:shadow-md hover:border-slate-300/80 transition-all duration-200;
+  }
+
+  .glass-input {
+    @apply bg-white/90 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all;
+  }
+
+  .glass-button-primary {
+    @apply bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-medium px-4 py-2.5 rounded-xl shadow-sm hover:shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+
+  .glass-button-secondary {
+    @apply bg-white/80 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 font-medium px-4 py-2.5 rounded-xl shadow-sm hover:shadow transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Leaflet Container Stacking Context Fix */
+.leaflet-container {
+  font-family: inherit;
+  z-index: 10;
+}

@@ -1,0 +1,90 @@
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { servicesApi, techniciansApi } from '../../api/client.js';
+import LocationPickerMap from './LocationPickerMap.jsx';
+
+export default function TechnicianOpportunities({ profile, onRefresh }) {
+  const [params, setParams] = useSearchParams();
+  const linkedId = params.get('work');
+  const [forming, setForming] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [catalog, setCatalog] = useState([]);
+  const [location, setLocation] = useState(null);
+  const [selected, setSelected] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setLocation(profile?.baseLocation);
+    setSelected(profile?.serviceCategories.map(c=>c._id) || []);
+  }, [profile]);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => techniciansApi.opportunities().then(res => {
+      if (!active) return;
+      setJobs(res.data);
+      setForming(res.meta?.formingPools || []);
+      setLoaded(true);
+    }).catch(err=>active && setError(err.message));
+    servicesApi.listActive().then(res=>active && setCatalog(res.data)).catch(err=>active && setError(err.message));
+    refresh();
+    const timer = setInterval(refresh, 15000);
+    return () => {active=false; clearInterval(timer);};
+  }, [profile]);
+  const linkedVisible = [...forming, ...jobs].some(job => job.id === linkedId);
+  useEffect(() => {
+    if (linkedId && loaded) document.getElementById('work-' + linkedId)?.scrollIntoView({ block: 'center' });
+  }, [linkedId, linkedVisible, loaded]);
+  async function act(action) {
+    setBusy(true); setError('');
+    try { await action(); await onRefresh(true); }
+    catch(err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return <section className="glass-panel rounded-3xl p-6 space-y-4">
+    <h2 className="text-lg font-bold">Available work</h2>
+    <details><summary className="cursor-pointer font-medium">Set work location and services</summary>
+      <div className="space-y-3 pt-3">
+        <LocationPickerMap value={location} onChange={setLocation} height="220px"/>
+        <fieldset><legend>Services you offer</legend>{catalog.map(c=><label className="inline-flex gap-2 mr-4" key={c._id}>
+          <input type="checkbox" checked={selected.includes(c._id)} onChange={e=>setSelected(e.target.checked?[...selected,c._id]:selected.filter(id=>id!==c._id))}/>{c.name}</label>)}</fieldset>
+        <button disabled={busy || !location} onClick={()=>act(()=>techniciansApi.updateProfile({ baseLocation: location, serviceCategories: selected }))} className="glass-button-secondary px-4 py-2">Save work preferences</button>
+      </div>
+    </details>
+    {error && <p role="alert">{error}</p>}
+    {loaded && linkedId && !linkedVisible && <p id={'work-' + linkedId} role="status">This request is no longer forming or available for you to claim. Check Assigned Jobs for work you already claimed.</p>}
+    {forming.length > 0 && <section className="space-y-2">
+      <h3 className="font-semibold">Forming pools</h3>
+      {forming.map(pool => {
+        const expanded = linkedId === pool.id;
+        const panelId = 'pool-details-' + pool.id;
+        function togglePool() {
+          const next = new URLSearchParams(params);
+          if (expanded) next.delete('work');
+          else next.set('work', pool.id);
+          setParams(next, { replace: true });
+        }
+        return <article id={'work-' + pool.id} key={pool.id} className={`border rounded-xl ${expanded ? 'border-emerald-600' : ''}`}>
+          <button type="button" aria-expanded={expanded} aria-controls={panelId} onClick={togglePool}
+            className="w-full p-3 text-left flex justify-between items-center gap-3 rounded-xl hover:bg-emerald-50 focus-visible:ring-2 focus-visible:ring-emerald-600">
+            <span><strong className="block">{pool.name}</strong>
+              <span className="text-sm">{pool.members} of {pool.capacity} members · ₹{pool.total} current total</span>
+            </span>
+            <span className="text-sm font-semibold text-emerald-700">{expanded ? 'Hide details' : 'View details'}</span>
+          </button>
+          <div id={panelId} hidden={!expanded} className="border-t p-3 text-sm space-y-1">
+            <p>Service window: {new Date(pool.visitWindow.start).toLocaleString()} – {new Date(pool.visitWindow.end).toLocaleString()}</p>
+            <p>Current price per visit: ₹{pool.pricePerVisit}</p>
+            <p>Opens for claims when full or after {new Date(pool.closesAt).toLocaleString()}.</p>
+          </div>
+        </article>;
+      })}
+    </section>}
+    {jobs.length ? <p className="text-sm">Oldest requests first. Claim a job to add it to your assigned work.</p> :
+      <p className="text-sm">No eligible jobs are ready to claim.</p>}
+    {jobs.map(j=><article id={'work-' + j.id} key={j.id} className="border rounded-xl p-3 flex items-center justify-between">
+      <div><strong>{j.name}</strong><p>{j.kind} · {j.distanceKm} km away · {j.members} visits · ₹{j.total} total</p>
+      <p className="text-sm">{new Date(j.start).toLocaleString()}</p></div>
+      <button className="glass-button-primary px-3 py-2" disabled={busy} onClick={()=>act(()=>techniciansApi.claim(j.id,j.kind))}>Claim job</button>
+    </article>)}
+  </section>;
+}

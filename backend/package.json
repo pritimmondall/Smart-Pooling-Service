@@ -1,0 +1,44 @@
+{
+  "name": "smart-pool-backend",
+  "version": "0.2.0",
+  "description": "Phase 2 backend foundation and MongoDB schemas for Smart Service Pooling Platform",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/scripts/seed.js",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:integration": "node --test tests/atlas-integration.js",
+    "test:pool": "node --test tests/pool-integration.js tests/pool-concurrency.js",
+    "test:phase4b": "node --test tests/pool-autonomous-lock.js tests/pool-concurrent-creation.js tests/pool-rollback.js tests/pool-lifecycle-integrity.js",
+    "test:phase4c": "node --test tests/pool-phase4c-verification.js",
+    "test:phase5a": "node --test tests/phase5a-integration.js",
+    "test:phase5a1": "node --test tests/phase5a1-concurrency.test.js tests/phase5a1-booking-assignment.test.js tests/phase5a1-route-audit.test.js",
+    "test:phase5a2": "node --test tests/phase5a2-edge-cases.test.js",
+    "test:phase5a2:step1": "node --test tests/phase5a2-step1-schemas-and-rejections.test.js",
+    "test:phase5a2:step2": "node --test tests/phase5a2-step2-technician-metrics.test.js",
+    "test:phase5a2:step3": "node --test tests/phase5a2-step3-technician-workload-route.test.js",
+    "test:phase5a2:step4": "node --test tests/phase5a2-step4-stop-progression.test.js",
+    "test:phase5a2:step5": "node --test tests/phase5a2-step5-customer-rating.test.js",
+    "test:atlas": "node --test tests/phase5a-atlas-integration.js",
+    "test:all": "node --test --test-concurrency=1 tests/*.test.js tests/phase5a-integration.js",
+    "verify:atlas": "node src/scripts/verify-atlas.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.9.5",
+    "morgan": "^1.10.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
+  }
+}
