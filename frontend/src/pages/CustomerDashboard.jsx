@@ -11,11 +11,12 @@ export default function CustomerDashboard() {
   const { user } = useAuth();
   const saved = user?.poolAlertLocation?.coordinates;
   const [location, setLocation] = useState(() => saved ? { lat: saved[1], lng: saved[0] } : null);
+  const [rangeMeters, setRangeMeters] = useState(200);
   const [editingLocation, setEditingLocation] = useState(false);
   const [address, setAddress] = useState('');
   const [finding, setFinding] = useState(false);
   const [lookup, setLookup] = useState('');
-  const { items, error, loading } = useNearbyPools(location);
+  const { items, error, loading } = useNearbyPools(location ? { ...location, radiusKm: rangeMeters / 1000 } : null);
 
   async function findAddress() {
     setFinding(true);
@@ -36,7 +37,11 @@ export default function CustomerDashboard() {
 
   return <main className="space-y-6 max-w-4xl mx-auto">
     <section className="glass-panel rounded-3xl p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Pools within 200 m</h1>
+      <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Nearby pools</h1>
+      <label className="block text-sm font-medium max-w-sm">Search range: {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'}
+        <input type="range" className="w-full mt-2 accent-emerald-600" min="100" max="1000" step="50" value={rangeMeters} onChange={event => setRangeMeters(Number(event.target.value))} />
+        <span className="flex justify-between text-xs text-slate-500"><span>100 m</span><span>1 km</span></span>
+      </label>
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <p>{location ? `Searching near ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}${saved && location.lat === saved[1] && location.lng === saved[0] ? ' (saved alert location)' : ''}` : 'Choose where you want service to find nearby pools.'}</p>
         <button type="button" className="text-emerald-700 underline" onClick={() => setEditingLocation(open => !open)}>
@@ -55,12 +60,12 @@ export default function CustomerDashboard() {
       {location && loading && <p>Finding nearby pools…</p>}
       {error && <p role="alert">{error}</p>}
       {!location && <p>Select a location on the map to search for pools.</p>}
-      {location && !loading && !error && items?.length === 0 && <p>No open pools within 200 m of this location. Try the service address or entrance used by the pool creator.</p>}
+      {location && !loading && !error && items?.length === 0 && <p>No open pools within {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'} of this location. Try the service address or entrance used by the pool creator.</p>}
       {items?.map(pool => <article key={pool.id} className="border rounded-xl p-4 flex items-center justify-between gap-3">
         <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} · {pool.members}/{pool.capacity} booked · ₹{pool.price} each after joining</p></div>
         <Link className="glass-button-primary px-4 py-2" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool</Link>
       </article>)}
-      <p className="text-xs text-slate-500">Same-building pools also require the matching building or apartment block when joining.</p>
+      <p className="text-xs text-slate-500">A pool appears only if your location is within its creator's joining area. Same-building pools also require the matching building or apartment block.</p>
     </section>
     <section className="glass-panel rounded-3xl p-6 space-y-3">
       <h2 className="font-bold text-xl flex items-center gap-2"><CalendarPlus className="text-emerald-600"/>Manual booking</h2>

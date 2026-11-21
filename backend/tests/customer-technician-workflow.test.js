@@ -124,6 +124,7 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
       const poolId = booking.poolId._id;
       assert.equal(booking.poolId.maxCapacity, capacity);
       assert.equal((await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36')).data.some(p=>p.id===poolId), false);
+      assert.equal((await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=0.5')).data.some(p=>p.id===poolId), scope !== '200m');
       const matching = (await request(neighbor, `/pools/nearby?lat=22.5236&lng=88.36&serviceCategoryId=${plumbing._id}&specificService=Tap%20repair`)).data;
       assert.equal(matching.some(p=>p.id===poolId), scope !== '200m');
       const response = await request(neighbor, '/bookings', 'POST', { ...manual, location: at400m, targetPoolId: poolId }, scope==='200m'?409:201);
@@ -145,5 +146,6 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
         assert.deepEqual(accepted.routeOrder.map(s=>String(s.bookingId)), [booking._id, response.data._id]);
       }
     }
+    await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=2', 'GET', undefined, 400);
   });
 });

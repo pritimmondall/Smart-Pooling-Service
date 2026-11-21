@@ -8,13 +8,16 @@ import { calculatePoolPricing } from './pricing.service.js';
 import { poolScopes } from './poolOptions.js';
 
 export const nearbyPools = asyncHandler(async (req, res) => {
-  const { lat, lng, serviceCategoryId, specificService, poolId } = req.query;
+  const { lat, lng, serviceCategoryId, specificService, poolId, radiusKm } = req.query;
   const point = lat !== undefined || lng !== undefined ? parseGeoInput({ lat, lng }) : req.user.poolAlertLocation;
   if (!point) return sendSuccess(res, { data: [], meta: { needsLocation: true } });
   for (const id of [serviceCategoryId, poolId]) {
     if (id !== undefined && !mongoose.isObjectIdOrHexString(id)) throw new AppError(400, 'Invalid search ID.', 'INVALID_ID');
   }
-  const radius = serviceCategoryId || poolId ? 1 : 0.2;
+  const radius = radiusKm === undefined ? (serviceCategoryId || poolId ? 1 : 0.2) : Number(radiusKm);
+  if (!Number.isFinite(radius) || radius < 0.1 || radius > 1) {
+    throw new AppError(400, 'Choose a search range between 100 m and 1 km.', 'INVALID_RADIUS');
+  }
   const pools = await ServicePool.find({
     status: 'forming', lockCutoffTime: { $gt: new Date() },
     centroidLocation: { $geoWithin: { $centerSphere: [point.coordinates, radius / 6371] } },
