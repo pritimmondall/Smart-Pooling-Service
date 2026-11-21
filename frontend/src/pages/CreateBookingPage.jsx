@@ -16,6 +16,11 @@ export default function CreateBookingPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const invited = params.get('poolId');
+  const invitedLat = Number(params.get('lat'));
+  const invitedLng = Number(params.get('lng'));
+  const invitedLocation = params.has('lat') && params.has('lng') && Number.isFinite(invitedLat) && Number.isFinite(invitedLng)
+    && Math.abs(invitedLat) <= 90 && Math.abs(invitedLng) <= 180
+    ? { lat: invitedLat, lng: invitedLng } : null;
   const [catalog, setCatalog] = useState([]);
   const [scopes, setScopes] = useState({});
   const [domain, setDomain] = useState('');
@@ -26,8 +31,8 @@ export default function CreateBookingPage() {
   const [choice, setChoice] = useState('');
   const targetId = invited || choice;
   const saved = user?.poolAlertLocation?.coordinates;
-  const [coords, setCoords] = useState({ lat: saved?.[1] ?? 22.5015, lng: saved?.[0] ?? 88.3531 });
-  const locationEdited = useRef(false);
+  const [coords, setCoords] = useState(invitedLocation || { lat: saved?.[1] ?? 22.5015, lng: saved?.[0] ?? 88.3531 });
+  const locationEdited = useRef(Boolean(invitedLocation));
   useEffect(() => {
     if (saved) return;
     let active = true;
@@ -43,7 +48,7 @@ export default function CreateBookingPage() {
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [finding, setFinding] = useState(false);
-  const [pinConfirmed, setPinConfirmed] = useState(Boolean(saved));
+  const [pinConfirmed, setPinConfirmed] = useState(Boolean(invitedLocation || saved));
   const [lookup, setLookup] = useState('');
   const [start, setStart] = useState(() => localInput(new Date(Date.now()+86400000)));
   const [end, setEnd] = useState(() => localInput(new Date(Date.now()+100800000)));
