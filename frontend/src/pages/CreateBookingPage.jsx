@@ -70,8 +70,8 @@ export default function CreateBookingPage() {
   const category = catalog.find(c => c.domain === domain && c.services.includes(specific));
   const nearby = useNearbyPools(mode !== 'pool' || (!invited && !category) ? null :
     { ...coords, ...(invited ? { poolId: invited } : { serviceCategoryId: category._id, specificService: specific }) });
-  const target = nearby.items?.find(p => p.id === targetId);
-  const needsBuilding = mode === 'pool' && (targetId ? target?.scope : scope) === 'building';
+  const target = nearby.items?.find(p => p.id === targetId && p.canJoinFromLocation !== false);
+  const needsBuilding = mode === 'pool' && !targetId && scope === 'building';
   const individual = mode === 'individual';
   async function findAddress() {
     setFinding(true); setLookup('');
@@ -133,8 +133,8 @@ export default function CreateBookingPage() {
           <label className="block">Preferred end<input className={input} type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></label>
         </> : <>
           {!invited && Boolean(nearby.items?.length || choice) && <label className="block">Available pools<select className={input} value={choice} onChange={e=>setChoice(e.target.value)}>
-            <option value="">Create my own pool</option>{nearby.items?.map(p=><option key={p.id} value={p.id}>{p.area} · {p.distanceMeters} m away · ₹{p.price} each</option>)}</select></label>}
-          {targetId ? <div aria-live="polite">{target ? <><strong>{target.name}</strong><p>{target.area} · {target.members}/{target.capacity} booked · ₹{target.price} after joining</p><p>Service starts from {new Date(target.start).toLocaleString()}.</p></> : nearby.loading ? 'Checking pool…' : 'Pool unavailable at this location.'}</div> :
+            <option value="">Create my own pool</option>{nearby.items?.filter(p => p.canJoinFromLocation !== false).map(p=><option key={p.id} value={p.id}>{p.area} · {p.distanceMeters} m away · ₹{p.price} each</option>)}</select></label>}
+          {targetId ? <div aria-live="polite">{target ? <><strong>{target.name}</strong><p>{target.area} · {target.members}/{target.capacity} booked · ₹{target.price} after joining</p><p>Service starts from {new Date(target.start).toLocaleString()}.</p></> : nearby.loading ? 'Checking pool…' : 'Pool unavailable to join at this location.'}</div> :
             <label className="block">Who can join?<select className={input} value={scope} onChange={e=>setScope(e.target.value)}>{Object.entries(scopes).map(([k,s])=><option key={k} value={k}>{s.label} · up to {s.capacity} people</option>)}</select></label>}
           {needsBuilding && <label className="block">Building or apartment block name<input className={input} required maxLength={160} value={building} onChange={e=>setBuilding(e.target.value)} placeholder="Building name and block, without flat number"/></label>}
           <p className="text-sm">Pool visits follow booking order. The pool closes when full or after 30 minutes.</p>

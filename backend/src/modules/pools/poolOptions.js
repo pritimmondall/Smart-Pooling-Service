@@ -1,7 +1,7 @@
 import { AppError } from '../../utils/appError.js';
 
 export const poolScopes = {
-  building: { label: 'Same building', capacity: 10, radiusKm: 0.1 },
+  building: { label: 'Apartment area (100 m)', capacity: 10, radiusKm: 0.1 },
   '200m': { label: '200 m', capacity: 6, radiusKm: 0.2 },
   '500m': { label: '500 m', capacity: 4, radiusKm: 0.5 },
   '1km': { label: '1 km', capacity: 2, radiusKm: 1 },

@@ -133,8 +133,8 @@ export const createBooking = asyncHandler(async (req, res) => {
   const scopeKey = bookingMode === 'pool' ? (target ? target.poolScope : req.body.poolScope) : undefined;
   const scope = scopeKey === undefined ? null : getScope(scopeKey);
   const building = scopeKey === 'building' ? buildingKey(req.body.building) : undefined;
-  if (scope && (!specificService || (scopeKey === 'building' && !building))) {
-    throw new AppError(400, 'Select a service and enter the building name for a building pool.', 'VALIDATION_ERROR');
+  if (scope && (!specificService || (scopeKey === 'building' && !target && !building))) {
+    throw new AppError(400, 'Select a service and enter the building name for an apartment-area pool.', 'VALIDATION_ERROR');
   }
   const parsedWindow = target ? target.aggregateTimeWindow : scope
     ? scheduledWindow(category, scope.capacity) : parseTimeWindow(timeWindow);

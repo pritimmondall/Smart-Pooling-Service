@@ -106,7 +106,7 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   assert.equal(history.meta.pagination.total, 6);
   assert.equal(history.meta.byStatus.completed, 1);
 
-  await t.test('manual pools honor scope, building, queue order and member prices', async () => {
+  await t.test('manual pools appear across buildings while joining respects distance, queue order and member prices', async () => {
     const plumbing = await ServiceCategory.create({ name: 'Plumbing', slug: 'plumbing', baseIndividualPrice: 500, estimatedDurationMins: 40 });
     const manual = { ...payload, serviceCategoryId: plumbing._id, specificService: 'Tap repair', timeWindow: undefined };
     const near = { lat: 22.5201, lng: 88.36 };
@@ -114,9 +114,10 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
     const tower = (await request(owner, '/bookings', 'POST', { ...manual, poolScope: 'building', building: 'Tower A' }, 201)).data;
     assert.equal(tower.poolId.maxCapacity, 10);
     assert.ok(Date.parse(tower.timeWindow.start) > Date.now());
+    const visibleTower = (await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=0.5')).data.find(p => p.id === tower.poolId._id);
+    assert.equal(visibleTower?.canJoinFromLocation, false);
     const join = { ...manual, targetPoolId: tower.poolId._id, location: near };
-    await request(neighbor, '/bookings', 'POST', { ...join, building: 'Tower B' }, 409);
-    const member = (await request(neighbor, '/bookings', 'POST', { ...join, building: ' tower   A ' }, 201)).data;
+    const member = (await request(neighbor, '/bookings', 'POST', { ...join, building: 'Tower B' }, 201)).data;
     assert.equal(member.estimatedPrice, 450);
     assert.equal((await request(neighbor, `/bookings/${member._id}`)).data.visitPosition, 2);
     for (const [scope, capacity] of [['200m',6],['500m',4],['1km',2]]) {
@@ -124,9 +125,10 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
       const poolId = booking.poolId._id;
       assert.equal(booking.poolId.maxCapacity, capacity);
       assert.equal((await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36')).data.some(p=>p.id===poolId), false);
-      assert.equal((await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=0.5')).data.some(p=>p.id===poolId), scope !== '200m');
+      const withinSearchRange = (await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=0.5')).data.find(p=>p.id===poolId);
+      assert.equal(withinSearchRange?.canJoinFromLocation, scope !== '200m');
       const matching = (await request(neighbor, `/pools/nearby?lat=22.5236&lng=88.36&serviceCategoryId=${plumbing._id}&specificService=Tap%20repair`)).data;
-      assert.equal(matching.some(p=>p.id===poolId), scope !== '200m');
+      assert.equal(matching.find(p=>p.id===poolId)?.canJoinFromLocation, scope !== '200m');
       const response = await request(neighbor, '/bookings', 'POST', { ...manual, location: at400m, targetPoolId: poolId }, scope==='200m'?409:201);
       if (scope === '1km') {
         assert.equal(response.data.poolId.status, 'locked');

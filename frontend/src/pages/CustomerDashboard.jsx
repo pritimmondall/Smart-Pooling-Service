@@ -15,6 +15,7 @@ export default function CustomerDashboard() {
   const [editingLocation, setEditingLocation] = useState(false);
   const [address, setAddress] = useState('');
   const [finding, setFinding] = useState(false);
+  const [locating, setLocating] = useState(false);
   const [lookup, setLookup] = useState('');
   const { items, error, loading } = useNearbyPools(location ? { ...location, radiusKm: rangeMeters / 1000 } : null);
 
@@ -35,6 +36,23 @@ export default function CustomerDashboard() {
     }
   }
 
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setLookup('This browser cannot provide your current location. Choose it on the map.');
+      return;
+    }
+    setLocating(true);
+    setLookup('');
+    navigator.geolocation.getCurrentPosition(position => {
+      setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+      setLocating(false);
+      setLookup('Searching from your current location.');
+    }, () => {
+      setLocating(false);
+      setLookup('Location access was unavailable. Choose your location on the map.');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  }
+
   return <main className="space-y-6 max-w-4xl mx-auto">
     <section className="glass-panel rounded-3xl p-6 space-y-4">
       <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Nearby pools</h1>
@@ -47,7 +65,9 @@ export default function CustomerDashboard() {
         <button type="button" className="text-emerald-700 underline" onClick={() => setEditingLocation(open => !open)}>
           {editingLocation ? 'Hide location picker' : 'Change search location'}
         </button>
+        <button type="button" className="text-emerald-700 underline" disabled={locating} onClick={useCurrentLocation}>{locating ? 'Finding your location…' : 'Use my current location'}</button>
       </div>
+      {!editingLocation && lookup && <p role="status" className="text-sm">{lookup}</p>}
       {editingLocation && <div className="space-y-3 border rounded-xl p-4">
         <label className="block text-sm font-medium">Street address or landmark
           <input className="glass-input w-full mt-1" value={address} onChange={event => setAddress(event.target.value)} maxLength={300} placeholder="Search for a service location" />
@@ -60,12 +80,14 @@ export default function CustomerDashboard() {
       {location && loading && <p>Finding nearby pools…</p>}
       {error && <p role="alert">{error}</p>}
       {!location && <p>Select a location on the map to search for pools.</p>}
-      {location && !loading && !error && items?.length === 0 && <p>No open pools within {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'} of this location. Try the service address or entrance used by the pool creator.</p>}
+      {location && !loading && !error && items?.length === 0 && <p>No open pools within {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'} of this location. Try another service location or a larger range.</p>}
       {items?.map(pool => <article key={pool.id} className="border rounded-xl p-4 flex items-center justify-between gap-3">
-        <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} · {pool.members}/{pool.capacity} booked · ₹{pool.price} each after joining</p></div>
-        <Link className="glass-button-primary px-4 py-2" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool</Link>
+        <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} joining area · {pool.members}/{pool.capacity} booked · ₹{pool.price} each after joining</p>
+          {pool.canJoinFromLocation === false && <p className="text-sm text-amber-700">Visible in your search range; choose a service location within this pool's joining area to join.</p>}
+        </div>
+        {pool.canJoinFromLocation !== false && <Link className="glass-button-primary px-4 py-2" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool</Link>}
       </article>)}
-      <p className="text-xs text-slate-500">A pool appears only if your location is within its creator's joining area. Same-building pools also require the matching building or apartment block.</p>
+      <p className="text-xs text-slate-500">Your search range includes pools in your apartment area and other buildings. Joining depends on the pool's distance limit.</p>
     </section>
     <section className="glass-panel rounded-3xl p-6 space-y-3">
       <h2 className="font-bold text-xl flex items-center gap-2"><CalendarPlus className="text-emerald-600"/>Manual booking</h2>

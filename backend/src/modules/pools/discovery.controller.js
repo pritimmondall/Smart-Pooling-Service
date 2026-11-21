@@ -30,10 +30,11 @@ export const nearbyPools = asyncHandler(async (req, res) => {
     if (!pool.serviceCategoryId?.isActive || members.length >= pool.maxCapacity ||
         members.some(m => String(m.customerId) === String(req.user._id))) continue;
     const area = poolScopes[pool.poolScope];
-    if (members.some(m => haversineDistanceKm(point, m.location) > (area?.radiusKm || 0.2))) continue;
+    const canJoinFromLocation = members.every(m => haversineDistanceKm(point, m.location) <= (area?.radiusKm || 0.2));
     items.push({
       id: pool._id, serviceCategoryId: pool.serviceCategoryId._id, name: pool.specificService || pool.serviceCategoryId.name,
       specificService: pool.specificService, scope: pool.poolScope, area: area?.label || '200 m',
+      canJoinFromLocation,
       members: members.length, capacity: pool.maxCapacity, start: pool.aggregateTimeWindow.start,
       distanceMeters: Math.round(haversineDistanceKm(point, pool.centroidLocation) * 1000),
       price: calculatePoolPricing({ basePrice: pool.serviceCategoryId.baseIndividualPrice, memberCount: members.length + 1 }).finalPricePerMember,
