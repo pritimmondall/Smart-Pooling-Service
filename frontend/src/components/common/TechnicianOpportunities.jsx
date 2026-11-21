@@ -74,13 +74,17 @@ export default function TechnicianOpportunities({ profile, onRefresh }) {
           <div id={panelId} hidden={!expanded} className="border-t p-3 text-sm space-y-1">
             <p>Service window: {new Date(pool.visitWindow.start).toLocaleString()} – {new Date(pool.visitWindow.end).toLocaleString()}</p>
             <p>Current price per visit: ₹{pool.pricePerVisit}</p>
-            <p>Opens for claims when full or after {new Date(pool.closesAt).toLocaleString()}.</p>
+            <p>Customers can join until the pool fills or {new Date(pool.closesAt).toLocaleString()}.</p>
+            {pool.reservedByMe ? <p className="font-semibold text-emerald-700">Reserved for you. It will appear in Assigned Jobs when the joining window closes.</p> :
+              pool.canReserve ? <button type="button" className="glass-button-primary px-3 py-2" disabled={busy}
+                onClick={()=>act(()=>techniciansApi.claim(pool.id,'pool'))}>Reserve this pool</button> :
+                pool.unavailableReason && <p className="text-amber-700">{pool.unavailableReason}</p>}
           </div>
         </article>;
       })}
     </section>}
     {jobs.length ? <p className="text-sm">Oldest requests first. Claim a job to add it to your assigned work.</p> :
-      <p className="text-sm">No eligible jobs are ready to claim.</p>}
+      <p className="text-sm">{forming.length ? 'No locked jobs are ready yet. You can reserve a forming pool above.' : 'No eligible jobs are ready to claim.'}</p>}
     {jobs.map(j=><article id={'work-' + j.id} key={j.id} className="border rounded-xl p-3 flex items-center justify-between">
       <div><strong>{j.name}</strong><p>{j.kind} · {j.distanceKm} km away · {j.members} visits · ₹{j.total} total</p>
       <p className="text-sm">{new Date(j.start).toLocaleString()}</p></div>

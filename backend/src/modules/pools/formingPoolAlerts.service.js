@@ -17,7 +17,7 @@ export async function notifyTechniciansOfNewPool(pool, serviceName, session) {
     await Notification.insertMany(users.map(user => ({
       userId: user._id, role: 'technician', type: 'pool', relatedEntityId: pool._id,
       title: 'New service pool',
-      message: `A ${serviceName} pool is forming. It opens for claims when full or when its joining window closes.`,
+      message: `A ${serviceName} pool is forming. You can reserve it now while customers continue joining.`,
     })), { session, ordered: true });
   }
 }

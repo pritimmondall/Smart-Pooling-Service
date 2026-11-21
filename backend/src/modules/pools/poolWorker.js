@@ -4,6 +4,7 @@ import { Booking, ServicePool, Notification } from '../../models/index.js';
 import {
   findEligibleTechniciansForPool,
   findEligibleTechniciansForBooking,
+  assignPoolToTechnician,
 } from './poolAssignment.service.js';
 import { lockEligiblePools } from './poolLock.service.js';
 
@@ -104,7 +105,7 @@ export async function dispatchWaitingJobs(now = new Date()) {
   }
   const pools = ServicePool.find({
     status: 'locked', assignedTechnicianId: null, 'aggregateTimeWindow.end': { $gt: now },
-  }).sort({ 'aggregateTimeWindow.start': 1 }).select('_id').lean().cursor();
+  }).sort({ 'aggregateTimeWindow.start': 1 }).select('_id reservedTechnicianId').lean().cursor();
   const bookings = Booking.find({
     bookingMode: 'individual', poolId: null, technicianId: null,
     status: { $in: ['pending', 'confirmed'] }, 'timeWindow.end': { $gt: now },
@@ -115,6 +116,17 @@ export async function dispatchWaitingJobs(now = new Date()) {
   ]) {
     for await (const job of jobs) {
       try {
+        if (job.reservedTechnicianId) {
+          try {
+            await assignPoolToTechnician(job._id, job.reservedTechnicianId, { requireOpen: true });
+            continue;
+          } catch (error) {
+            if (!error.statusCode || error.statusCode >= 500) throw error;
+            await ServicePool.updateOne({ _id: job._id, status: 'locked', assignedTechnicianId: null,
+              reservedTechnicianId: job.reservedTechnicianId },
+            { $set: { reservedTechnicianId: null, reservedAt: null } });
+          }
+        }
         const { eligibleTechnicians } = await candidates(job._id);
         for (const tech of eligibleTechnicians) {
           await Notification.updateOne({ userId: tech.technicianId, relatedEntityId: job._id, type: 'opportunity' }, {

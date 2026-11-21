@@ -188,6 +188,13 @@ const servicePoolSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    reservedTechnicianId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    reservedAt: { type: Date, default: null },
     assignedAt: {
       type: Date,
       default: null,

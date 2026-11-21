@@ -82,13 +82,13 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
   const activeStatusFilter = { $in: ['assigned', 'accepted', 'arrived', 'in_progress'] };
 
   const [activePoolsCount, activeBookingsCount] = await Promise.all([
-    ServicePool.countDocuments(
-      {
-        assignedTechnicianId: user._id || profile.userId,
-        status: activeStatusFilter,
-      },
-      { session }
-    ),
+    ServicePool.countDocuments({
+      _id: { $ne: pool._id },
+      $or: [
+        { assignedTechnicianId: user._id || profile.userId, status: activeStatusFilter },
+        { reservedTechnicianId: user._id || profile.userId, status: 'forming' },
+      ],
+    }, { session }),
     Booking.countDocuments(
       {
         technicianId: user._id || profile.userId,
@@ -114,9 +114,11 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
     // Check assigned pools
     const activeAssignedPools = await ServicePool.find(
       {
-        assignedTechnicianId: user._id || profile.userId,
-        status: activeStatusFilter,
         _id: { $ne: pool._id },
+        $or: [
+          { assignedTechnicianId: user._id || profile.userId, status: activeStatusFilter },
+          { reservedTechnicianId: user._id || profile.userId, status: 'forming' },
+        ],
       },
       'aggregateTimeWindow',
       { session }
@@ -445,6 +447,42 @@ export async function findEligibleTechniciansForBooking(bookingId) {
 }
 
 /**
+ * Reserves a forming pool for a technician while customers can still join it.
+ */
+export async function reserveFormingPoolForTechnician(poolId, technicianUserId) {
+  if (!mongoose.isValidObjectId(poolId) || !mongoose.isValidObjectId(technicianUserId)) {
+    throw new AppError(400, 'Invalid pool or technician ID.', 'INVALID_ID');
+  }
+  return runInTransaction(async session => {
+    const pool = await ServicePool.findById(poolId).session(session);
+    if (!pool || pool.status !== 'forming' || pool.lockCutoffTime <= new Date() || pool.aggregateTimeWindow.end <= new Date()) {
+      throw new AppError(409, 'This pool is no longer open for reservation.', 'POOL_UNAVAILABLE');
+    }
+    if (String(pool.reservedTechnicianId || '') === String(technicianUserId)) return pool;
+    if (pool.reservedTechnicianId) throw new AppError(409, 'Another technician reserved this pool.', 'POOL_ALREADY_RESERVED');
+
+    const profile = await TechnicianProfile.findOneAndUpdate(
+      { userId: technicianUserId }, { $inc: { version: 1 } }, { session, new: true }
+    ).populate('userId', 'name email phone isActive');
+    if (!profile) throw new AppError(404, 'Technician profile not found.', 'TECH_PROFILE_NOT_FOUND');
+    const evaluation = await evaluateTechnicianEligibility(profile, pool, { session });
+    if (!evaluation.isEligible) {
+      throw new AppError(409, `Technician is not eligible for this pool: ${evaluation.reasons.join(' ')}`,
+        'TECHNICIAN_NOT_ELIGIBLE', evaluation.reasons);
+    }
+    const reserved = await ServicePool.findOneAndUpdate({
+      _id: poolId, status: 'forming', reservedTechnicianId: null, lockCutoffTime: { $gt: new Date() },
+    }, { $set: { reservedTechnicianId: technicianUserId, reservedAt: new Date() }, $inc: { version: 1 } },
+    { new: true, session });
+    if (!reserved) throw new AppError(409, 'Another technician reserved this pool first.', 'POOL_ALREADY_RESERVED');
+    await Notification.create([{ userId: technicianUserId, role: 'technician', type: 'dispatch',
+      title: 'Pool Reserved', message: 'You reserved this pool. Customers can join until it fills or the joining window closes.',
+      relatedEntityId: pool._id }], { session });
+    return reserved;
+  }, { requireTransaction: true });
+}
+
+/**
  * Assigns a locked service pool to an eligible technician with atomic concurrency protection.
  *
  * Prevents:
@@ -488,6 +526,9 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
       if (pool.assignedTechnicianId) {
         throw new AppError(409, 'This service pool is already assigned to a technician.', 'POOL_ALREADY_ASSIGNED');
       }
+      if (pool.reservedTechnicianId && String(pool.reservedTechnicianId) !== String(technicianUserId)) {
+        throw new AppError(409, 'This pool is reserved by another technician.', 'POOL_ALREADY_RESERVED');
+      }
 
       // 2. Technician-level concurrency reservation: atomically increment version on TechnicianProfile.
       // This serializes concurrent assignments for the same technician across different pools/bookings.
@@ -519,12 +560,15 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
           _id: pool._id,
           status: 'locked',
           assignedTechnicianId: null,
+          reservedTechnicianId: { $in: [null, technicianUserId] },
         },
         {
           $set: {
             status: 'assigned',
             assignedTechnicianId: lockedProfile.userId._id,
             assignedAt: new Date(),
+            reservedTechnicianId: null,
+            reservedAt: null,
           },
           $inc: { version: 1 },
         },
