@@ -1,4 +1,5 @@
 import { ServicePool, Notification } from '../../models/index.js';
+import { settleClosingLimits } from './matching.service.js';
 import { runInTransaction } from '../../config/db.js';
 
 /**
@@ -37,7 +38,7 @@ export async function lockEligiblePools({
         const targetStatus = activeCount === 0 ? 'cancelled' : 'locked';
 
         // Atomic conditional transition: Only succeeds if status is still 'forming' and cutoff <= now
-        const lockedPool = await ServicePool.findOneAndUpdate(
+        let lockedPool = await ServicePool.findOneAndUpdate(
           {
             _id: pool._id,
             status: 'forming',
@@ -58,7 +59,8 @@ export async function lockEligiblePools({
           return;
         }
 
-        if (targetStatus === 'cancelled') {
+        lockedPool = await settleClosingLimits(lockedPool, session);
+        if (lockedPool.status === 'cancelled') {
           cancelledCount += 1;
         } else {
           lockedCount += 1;

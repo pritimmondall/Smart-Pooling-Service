@@ -434,6 +434,13 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
       { session }
     );
 
+    if (joinedPool.status === 'locked') {
+      joinedPool = await settleClosingLimits(joinedPool, session);
+      const current = await Booking.findById(booking._id).session(session);
+      if (current.status === 'cancelled') return { booking: current, pool: null, mode: 'cancelled' };
+      booking.estimatedPrice = current.estimatedPrice;
+    }
+
     // Create notification for the customer
     await Notification.create(
       [
@@ -441,7 +448,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
           userId: booking.customerId,
           role: 'customer',
           title: 'Joined Service Pool',
-          message: `Your booking joined a service pool with ${activeMembers.length} members. You are saving ₹${newPricing.totalSavingsPerMember} (${newPricing.discountPercentage}% discount)!`,
+          message: `Your pool has ${joinedPool.pricing.memberCount} active members. Your price is ₹${booking.estimatedPrice}.`,
           type: 'booking',
           relatedEntityId: booking._id,
         },
@@ -584,7 +591,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
  * Removes a booking from its pool (e.g. upon cancellation or address modification).
  * Handles recalculation of centroid, aggregate time window, cutoff, and pricing.
  */
-export async function removeBookingFromPool(bookingId, session = null) {
+export async function removeBookingFromPool(bookingId, session = null, settling = false) {
   if (!session) return runBookingTransaction(tx => removeBookingFromPool(bookingId, tx));
   const booking = await Booking.findById(bookingId).session(session);
   if (!booking || !booking.poolId) {
@@ -676,5 +683,26 @@ export async function removeBookingFromPool(bookingId, session = null) {
   booking.poolId = null;
   await booking.save({ session });
 
+  if (!settling && pool.status === 'locked') return settleClosingLimits(pool, session);
+  return pool;
+}
+
+// Removing one member can raise the price for the remaining members. Recheck until stable.
+export async function settleClosingLimits(pool, session) {
+  while (pool.status !== 'cancelled') {
+    const overLimit = await Booking.findOne({ poolId: pool._id, status: { $in: ['pending', 'confirmed'] },
+      closingPriceLimit: { $type: 'number', $lt: pool.pricing.finalPricePerMember } }).session(session);
+    if (!overLimit) break;
+    pool = await removeBookingFromPool(overLimit._id, session, true);
+    await Booking.updateOne({ _id: overLimit._id }, { $set: { status: 'cancelled', cancelledAt: new Date() } }, { session });
+    await Notification.create([{ userId: overLimit.customerId, role: 'customer', type: 'booking',
+      relatedEntityId: overLimit._id, title: 'Cancelled at your price limit',
+      message: `The closing price exceeded your ₹${overLimit.closingPriceLimit} limit. Your visit was cancelled.`,
+    }], { session });
+  }
+  if (pool.status !== 'cancelled' && pool.status !== 'locked') {
+    pool.status = 'locked';
+    await pool.save({ session });
+  }
   return pool;
 }

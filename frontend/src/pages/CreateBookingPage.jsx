@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import useNearbyPools from '../components/common/useNearbyPools.js';
 
+import ClosingPriceLimit from '../components/common/ClosingPriceLimit.jsx';
+
 const panel = 'glass-panel rounded-3xl p-6 space-y-4';
 const input = 'glass-input w-full';
 function localInput(date) {
@@ -46,6 +48,7 @@ export default function CreateBookingPage() {
     return () => { active = false; };
   }, [saved]);
   const [address, setAddress] = useState('');
+  const [limit, setLimit] = useState('');
   const [notes, setNotes] = useState('');
   const [finding, setFinding] = useState(false);
   const [pinConfirmed, setPinConfirmed] = useState(Boolean(invitedLocation || saved));
@@ -113,10 +116,12 @@ export default function CreateBookingPage() {
       const res = await bookingsApi.create({
         serviceCategoryId: target?.serviceCategoryId || category._id, specificService: target?.specificService || specific,
         bookingMode: automatic ? 'pool' : mode, location: coords, addressText: address.trim() || `Map pin ${coords.lat}, ${coords.lng}`,
+        ...(!individual && limit && { closingPriceLimit: Number(limit) }),
+        ...(invited && params.get('watch') === '1' && { watchWindow: { start: new Date(Math.max(Date.now() + 60000, Date.parse(params.get('start')))), end: params.get('end') } }),
         notes, ...(automatic && { quotedPrice: quote.finalPricePerMember }), ...(individual || automatic ? { timeWindow: { start: new Date(start), end: new Date(end) } } :
           { ...(targetId ? { targetPoolId: targetId, quotedPrice: target.price } : { poolScope: scope }), ...(needsBuilding && { building }) }),
       });
-      navigate(`/bookings/${res.data._id}`, { state: { flashMessage: 'Booking confirmed.' } });
+      navigate(`/bookings/${res.data._id}`, { state: { flashMessage: res.message } });
     } catch (err) { setPreview(null); setError(err.message); } finally { setBusy(false); }
   }
 
@@ -164,6 +169,7 @@ export default function CreateBookingPage() {
           `Matching pool · ${quote.memberCount} members including you · save ₹${quote.totalSavingsPerMember} each (${quote.discountPercentage}%)`}</p>}
         {quote?.recommendedMatch && <p className="text-sm">Pool centre {quote.recommendedMatch.distanceMeters} m away · {quote.recommendedMatch.overlapMinutes} minutes of shared availability</p>}
         {!individual && !targetId && <p className="text-sm">The price decreases for everyone as neighbors join.</p>}
+        {!individual && <ClosingPriceLimit value={limit} onChange={setLimit}/>}
         <button disabled={busy || finding || (!category && !target) || Boolean(targetId && !target)} className="glass-button-primary px-5 py-3">
           {busy ? 'Please wait…' : submitLabel}</button>
       </div>

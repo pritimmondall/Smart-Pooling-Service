@@ -77,6 +77,7 @@ const bookingSchema = new mongoose.Schema(
       enum: BOOKING_STATUSES,
       default: 'pending',
     },
+    closingPriceLimit: { type: Number, min: 0 },
     estimatedPrice: {
       type: Number,
       required: true,

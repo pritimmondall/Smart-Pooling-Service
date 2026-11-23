@@ -8,6 +8,8 @@ import {
 } from './poolAssignment.service.js';
 import { lockEligiblePools } from './poolLock.service.js';
 
+import { notifyMatchingWatches } from './watch.service.js';
+
 let workerTimer = null;
 let currentSweepPromise = null;
 
@@ -24,7 +26,10 @@ export async function runPoolLockSweep(options = {}) {
           `[PoolWorker] Sweep completed: ${result.processedCount} evaluated, ${result.lockedCount} locked, ${result.cancelledCount} cancelled.`
         );
       }
-      if (options.dispatch) await dispatchWaitingJobs();
+      if (options.dispatch) {
+        await dispatchWaitingJobs();
+        await notifyMatchingWatches();
+      }
       return result;
     } catch (err) {
       console.error('[PoolWorker] Error during automatic pool lock sweep:', err.message);

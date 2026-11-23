@@ -107,6 +107,9 @@ export const zonesApi = {
 
 // Bookings API
 export const bookingsApi = {
+  watches: () => api.get('/bookings/watches'),
+  watch: data => api.post('/bookings/watches', data),
+  removeWatch: id => api.delete('/bookings/watches/' + id),
   dashboard: () => api.get('/bookings/dashboard'),
   quote: (data) => api.post('/bookings/quote', data),
   getRating: (id) => api.get(`/bookings/${id}/rating`),

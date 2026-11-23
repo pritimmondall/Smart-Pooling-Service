@@ -13,7 +13,7 @@ export default function LoginPage() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const from = location.state?.from?.pathname || '/';
+  const from = location.state?.from || '/';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -158,7 +158,7 @@ export default function LoginPage() {
         {/* Footer Link */}
         <p className="text-center text-xs text-slate-500 mt-6">
           Don&apos;t have an account?{' '}
-          <Link to="/register" className="font-semibold text-emerald-700 hover:text-emerald-800">
+          <Link state={location.state} to="/register" className="font-semibold text-emerald-700 hover:text-emerald-800">
             Create an account
           </Link>
         </p>

@@ -31,6 +31,7 @@ const notificationSchema = new mongoose.Schema(
     },
     invitation: {
       serviceCategoryId: mongoose.Schema.Types.ObjectId,
+      lat: Number, lng: Number, fromWatch: Boolean,
       start: Date,
       end: Date,
     },

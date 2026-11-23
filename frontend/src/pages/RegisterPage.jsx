@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, ArrowRight, Lock, Mail, User, Phone, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function RegisterPage() {
   const { register } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
@@ -43,7 +44,7 @@ export default function RegisterPage() {
         phone: formData.phone.trim(),
         password: formData.password,
       });
-      navigate('/', { replace: true });
+      navigate(location.state?.from || '/', { replace: true });
     } catch (err) {
       setError(err.message || 'Registration failed. Please check your information.');
     } finally {
@@ -180,7 +181,7 @@ export default function RegisterPage() {
         {/* Footer Link */}
         <p className="text-center text-xs text-slate-500 mt-6">
           Already registered?{' '}
-          <Link to="/login" className="font-semibold text-emerald-700 hover:text-emerald-800">
+          <Link state={location.state} to="/login" className="font-semibold text-emerald-700 hover:text-emerald-800">
             Sign in
           </Link>
         </p>

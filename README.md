@@ -31,6 +31,14 @@ Open [SmartPool](http://localhost:5001). Express serves both the built frontend 
 4. Another customer can join from the dashboard, an invitation, or a matching service in manual booking. Each join updates everyone's price. Customer-selected pools close when full or after 30 minutes. Automatic pools use the service’s dispatch cutoff before the shared appointment window. The system schedules a shared window after the service's dispatch lead time and estimates each visit in booking order with 15 minutes between visits.
 5. For seeded AC service, sign in with `tech.ac@smartpool.demo` and password `TechDemo123!`. Set the technician's work location, services and availability. Ready pools and individual requests appear oldest first. Eligible technicians get in-app alerts and can claim work, accept it and complete each visit.
 
+## Customer pooling options
+
+The pool finder can compare the preferred window with shifts of one or two hours in either direction. Customers review the cheaper options and choose a window before confirming. A forming booking shows the price after one more member joins and offers an invitation link.
+
+Customers can set a maximum closing price before booking. SmartPool evaluates limits when a pool fills or reaches its deadline. If a cancellation raises the price, the remaining limits are checked again in the same transaction. A blank limit keeps the visit at the applicable rate.
+
+A price watch sends one in-app notification when an automatic pool matches the selected service, location, window and budget. The pool worker checks watches during dispatch sweeps. Customers can remove pending watches. Reviewing the invitation checks availability again. During an accepted pool visit, the dashboard displays the number of unfinished stops before the customer's turn.
+
 ## Pricing and routes
 
 Automatic matching requires the same service, room in the pool, a shared window long enough for the service and a maximum pairwise distance of 200 m. Eligible pools are ranked by 45% proximity to the centroid, 35% appointment overlap and 20% capacity filled. Automatic pools use the route planner to sequence visits. Customer-selected pools retain booking order.

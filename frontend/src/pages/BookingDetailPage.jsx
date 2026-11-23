@@ -300,6 +300,8 @@ export default function BookingDetailPage() {
           </div>
         </div>
 
+        {booking.closingPriceLimit != null && <p className="text-sm">Your closing price limit · ₹{booking.closingPriceLimit}</p>}
+
         {!booking.poolScope && booking.routeSavings?.provider && (
           <p className="text-sm text-emerald-800">
             Estimated travel credit ₹{Math.min(booking.estimatedPrice, booking.routeSavings.customerPaise / 100).toFixed(2)} · Estimated total after credit ₹{Math.max(0, booking.estimatedPrice - booking.routeSavings.customerPaise / 100).toFixed(2)}

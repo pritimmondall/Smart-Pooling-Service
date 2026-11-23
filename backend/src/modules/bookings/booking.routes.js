@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import {
-  createBooking,
+  createBooking, createWatch, listWatches, deleteWatch,
   quoteBooking,
   confirmCompletion,
   getMyBookings,
@@ -19,6 +19,9 @@ import { validateObjectIdParam, requireBodyFields } from '../../middleware/valid
 const router = Router();
 
 router.use(protect);
+router.get('/watches', authorizeRoles('customer'), listWatches);
+router.post('/watches', authorizeRoles('customer'), requireBodyFields('specificService', 'location', 'timeWindow', 'maxPrice'), createWatch);
+router.delete('/watches/:id', authorizeRoles('customer'), validateObjectIdParam('id'), deleteWatch);
 router.post('/quote', authorizeRoles('customer'), requireBodyFields('serviceCategoryId', 'location', 'timeWindow'), quoteBooking);
 
 router.post(

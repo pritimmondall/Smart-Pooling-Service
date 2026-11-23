@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import puppeteer from 'puppeteer-core';
+import { notifyMatchingWatches } from '../../backend/src/modules/pools/watch.service.js';
 import { createApp } from '../../backend/src/app.js';
 import { connectDB, disconnectDB } from '../../backend/src/config/db.js';
 import { env } from '../../backend/src/config/env.js';
@@ -52,6 +53,7 @@ test('two customers share a quoted pool, the technician completes both stops, an
   }
 
   const customers = [];
+  let firstWindow;
   for (const [index, account] of accounts.slice(0, 2).entries()) {
     const page = await login(account);
     customers.push(page);
@@ -59,6 +61,7 @@ test('two customers share a quoted pool, the technician completes both stops, an
     await page.waitForSelector('option[value="' + value + '"]');
     await page.select('form select', value);
     if (index === 0) {
+      firstWindow = await page.$eval('input[type=datetime-local]', input => input.value);
       const individualUrl = await page.$eval('a::-p-text(Book individually)', link => link.href);
       const individual = await page.browserContext().newPage();
       await individual.goto(individualUrl, { waitUntil: 'domcontentloaded' });
@@ -68,21 +71,51 @@ test('two customers share a quoted pool, the technician completes both stops, an
     } else {
       await page.waitForFunction(() => document.body.innerText.includes('₹540 if you join'));
     }
+    if (index) {
+      await page.$$eval('input[type=datetime-local]', (inputs, firstStart) => {
+        const end = new Date(firstStart);
+        const start = new Date(+end - 3600000);
+        for (const [i, date] of [start, end].entries()) {
+          const local = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[i], local);
+          inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }, firstWindow);
+      await page.click('input[type=checkbox]');
+    }
     await click(page, 'Find my best pool');
+    if (index) {
+      await page.waitForFunction(() => document.body.innerText.includes('1h later'));
+      await page.click('input[name=visit-window]:not(:checked)');
+    }
     await page.waitForFunction(price => document.body.innerText.includes(price + ' each after booking'), {}, index ? '₹540' : '₹600');
-    if (index) await page.waitForFunction(() => document.body.innerText.includes('Save ₹60 (10%)'));
+    if (index) {
+      await page.waitForFunction(() => document.body.innerText.includes('Save ₹60 (10%)'));
+      await page.click('summary::-p-text(Watch for a price)');
+      await page.type('details input[type=number]', '540');
+      await click(page, 'Save price watch');
+      await page.waitForFunction(() => document.body.innerText.includes('Watch saved.'));
+      await notifyMatchingWatches();
+      const inbox = await page.browserContext().newPage();
+      await inbox.goto(origin + '/notifications', { waitUntil: 'domcontentloaded' });
+      const alert = await inbox.waitForSelector('a[href*="watch=1"]');
+      await alert.click();
+      await inbox.waitForFunction(() => document.body.innerText.includes('₹540 after joining'));
+      await inbox.close();
+    }
+    if (!index) await page.type('input[placeholder="No limit · keep my visit"]', '550');
     await click(page, index ? 'Confirm pooled booking' : 'Start a pool');
     await page.waitForFunction(() => location.pathname.startsWith('/bookings/'));
     if (!index) {
       await page.goto(origin, { waitUntil: 'domcontentloaded' });
-      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 each'));
+      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 each') && document.body.innerText.includes('One more neighbour') && document.body.innerText.includes('₹550'));
     }
   }
   await customers[0].waitForFunction(() => document.body.innerText.includes('2 members · ₹540 each'));
   const tech = await login(accounts[2]);
   await click(tech, 'Claim job');
   await click(tech, 'Accept');
-  await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · Technician') && document.body.innerText.includes('Estimated visit ·'));
+  await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · Technician') && document.body.innerText.includes('Estimated visit ·') && /visit before yours|Your visit is next/.test(document.body.innerText));
   for (let stop = 0; stop < 2; stop++) {
     for (const [label, action] of [['Mark Arrived', 'arrive'], ['Start Service', 'start'], ['Complete Service', 'complete']]) {
       const [response] = await Promise.all([

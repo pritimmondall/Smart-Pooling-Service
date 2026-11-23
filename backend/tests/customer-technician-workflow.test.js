@@ -87,10 +87,13 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   await request(tech, `/technicians/me/jobs/${poolId}/accept`, 'POST', {});
   const accepted = await ServicePool.findById(poolId);
   assert.equal(accepted.routeOrder.length, 2);
-  for (const stop of accepted.routeOrder) {
+  const laterCustomer = String(accepted.routeOrder[1].bookingId) === first._id ? owner : neighbor;
+  assert.equal((await request(laterCustomer, '/bookings/dashboard')).data.visitsAhead, 1);
+  for (const [index, stop] of accepted.routeOrder.entries()) {
     for (const action of ['arrive', 'start', 'complete']) {
       await request(tech, `/technicians/me/jobs/${poolId}/stops/${stop.bookingId}/${action}`, 'POST', {});
     }
+    if (!index) assert.equal((await request(laterCustomer, '/bookings/dashboard')).data.visitsAhead, 0);
   }
   const confirmation = (await request(owner, `/bookings/${first._id}/confirm-completion`, 'POST', {})).data;
   assert.deepEqual((await request(owner, `/bookings/${first._id}/confirm-completion`, 'POST', {})).data, confirmation);
@@ -105,6 +108,39 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   assert.equal(history.data.length, 5);
   assert.equal(history.meta.pagination.total, 6);
   assert.equal(history.meta.byStatus.completed, 1);
+
+  await t.test('price watches fire once and closing limits settle cascading cancellations', async () => {
+    const service = await ServiceCategory.create({ name: 'Window cleaning', slug: 'window-test', baseIndividualPrice: 600,
+      estimatedDurationMins: 30, maxPoolSize: 3 });
+    const input = { ...payload, specificService: service.name, serviceCategoryId: service.id };
+    const first = (await request(owner, '/bookings', 'POST', { ...input, closingPriceLimit: 500 }, 201)).data;
+    const watch = (await request(neighbor, '/bookings/watches', 'POST', { ...input, maxPrice: 540 }, 201)).data;
+    await request(distant, '/bookings/watches/' + watch._id, 'DELETE');
+    assert.equal((await request(neighbor, '/bookings/watches')).data.length, 1);
+    await runPoolLockSweep({ dispatch: true });
+    await runPoolLockSweep({ dispatch: true });
+    assert.equal((await request(neighbor, '/bookings/watches')).data.length, 0);
+    const alerts = (await request(neighbor, '/notifications/my')).data.filter(n => n.invitation?.fromWatch);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].relatedEntityId, first.poolId._id);
+    const second = (await request(neighbor, '/bookings', 'POST', { ...input, closingPriceLimit: 550 }, 201)).data;
+    const result = await runPoolLockSweep({ now: new Date(first.poolId.lockCutoffTime) });
+    assert.ok(result.cancelledCount >= 1);
+    for (const id of [first._id, second._id]) {
+      const record = await Booking.findById(id);
+      assert.equal(record.status, 'cancelled');
+      assert.equal(record.poolId, null);
+    }
+    assert.equal(await PoolMembership.countDocuments({ poolId: first.poolId._id, status: 'active' }), 0);
+    // At capacity, the two-member ₹540 price is acceptable at equality.
+    const fullService = await ServiceCategory.create({ name: 'Glass cleaning', slug: 'glass-test', baseIndividualPrice: 600,
+      estimatedDurationMins: 30, maxPoolSize: 2 });
+    const fullInput = { ...input, serviceCategoryId: fullService.id, specificService: fullService.name };
+    const retained = (await request(owner, '/bookings', 'POST', { ...fullInput, closingPriceLimit: 540 }, 201)).data;
+    await request(neighbor, '/bookings', 'POST', fullInput, 201);
+    assert.equal((await Booking.findById(retained._id)).estimatedPrice, 540);
+    assert.equal((await ServicePool.findById(retained.poolId._id)).status, 'locked');
+  });
 
   await t.test('manual pools appear across buildings while joining respects distance, queue order and member prices', async () => {
     const plumbing = await ServiceCategory.create({ name: 'Plumbing', slug: 'plumbing', baseIndividualPrice: 500, estimatedDurationMins: 40 });

@@ -1,3 +1,4 @@
+import { PoolWatch } from '../../models/PoolWatch.js';
 import { buildingKey, getScope, scheduledWindow, serviceOptions } from '../pools/poolOptions.js';
 import mongoose from 'mongoose';
 import {
@@ -79,6 +80,33 @@ export const quoteBooking = asyncHandler(async (req, res) => {
   return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch } });
 });
 
+function validatePriceLimit(value) {
+  if (typeof value !== 'number' || value <= 0 || !Number.isSafeInteger(Math.round(value * 100)) ||
+      Math.round(value * 100) / 100 !== value) {
+    throw new AppError(400, 'Enter a positive price in rupees with up to two decimal places.', 'INVALID_PRICE_LIMIT');
+  }
+}
+
+export const createWatch = asyncHandler(async (req, res) => {
+  const { serviceCategoryId, specificService, maxPrice } = req.body;
+  validatePriceLimit(maxPrice);
+  if (!mongoose.isObjectIdOrHexString(serviceCategoryId)) throw new AppError(400, 'Invalid service.', 'INVALID_ID');
+  const category = await ServiceCategory.findOne({ _id: serviceCategoryId, isActive: true });
+  if (!category || !serviceOptions(category).services.includes(specificService)) throw new AppError(400, 'Choose an available service.', 'INVALID_SERVICE');
+  const watch = await PoolWatch.create({ customerId: req.user._id, serviceCategoryId, specificService, maxPrice,
+    location: parseGeoInput(req.body.location), ...parseTimeWindow(req.body.timeWindow) });
+  return sendSuccess(res, { statusCode: 201, data: watch });
+});
+
+export const listWatches = asyncHandler(async (req, res) => sendSuccess(res, {
+  data: await PoolWatch.find({ customerId: req.user._id, end: { $gt: new Date() } }).sort({ start: 1 }).lean(),
+}));
+
+export const deleteWatch = asyncHandler(async (req, res) => {
+  await PoolWatch.deleteOne({ _id: req.params.id, customerId: req.user._id });
+  return sendSuccess(res, { data: null });
+});
+
 export const createBooking = asyncHandler(async (req, res) => {
   const {
     serviceCategoryId,
@@ -107,7 +135,11 @@ export const createBooking = asyncHandler(async (req, res) => {
     throw new AppError(400, 'Invalid quoted price.', 'VALIDATION_ERROR');
   }
 
-  const { targetPoolId } = req.body;
+  const { targetPoolId, closingPriceLimit } = req.body;
+  if (closingPriceLimit !== undefined) {
+    validatePriceLimit(closingPriceLimit);
+    if (bookingMode !== 'pool') throw new AppError(400, 'Price limits apply to pools.', 'INVALID_MODE');
+  }
   if (targetPoolId !== undefined && (bookingMode !== 'pool' || !mongoose.isObjectIdOrHexString(targetPoolId))) {
     throw new AppError(400, 'Invalid selected pool.', 'INVALID_ID');
   }
@@ -139,7 +171,7 @@ export const createBooking = asyncHandler(async (req, res) => {
   if (scope && (!specificService || (scopeKey === 'building' && !building))) {
     throw new AppError(400, 'Select a service and enter the building name for an apartment-area pool.', 'VALIDATION_ERROR');
   }
-  const parsedWindow = target ? target.aggregateTimeWindow : scope
+  const parsedWindow = target && req.body.watchWindow ? parseTimeWindow(req.body.watchWindow) : target ? target.aggregateTimeWindow : scope
     ? scheduledWindow(category, scope.capacity) : parseTimeWindow(timeWindow);
 
   const { booking, pool: assignedPool } = await runBookingTransaction(async session => {
@@ -152,7 +184,7 @@ export const createBooking = asyncHandler(async (req, res) => {
       location: geoLocation,
       addressText,
       timeWindow: parsedWindow,
-      bookingMode,
+      bookingMode, closingPriceLimit,
       status: 'pending',
       estimatedPrice: category.baseIndividualPrice,
       notes,
@@ -179,7 +211,7 @@ export const createBooking = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, {
     statusCode: 201,
-    message: assignedPool
+    message: freshBooking.status === 'cancelled' ? 'Cancelled at your closing price limit.' : assignedPool
       ? `Booking created and matched to service pool (${assignedPool.status}).`
       : 'Individual booking created.',
     data: freshBooking,
@@ -188,7 +220,7 @@ export const createBooking = asyncHandler(async (req, res) => {
 
 export const getDashboardBooking = asyncHandler(async (req, res) => {
   const customerId = req.user._id;
-  const select = 'specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
+  const select = 'closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
   const next = await Booking.findOne({ customerId, status: { $nin: ['completed', 'cancelled'] } })
     .sort({ 'timeWindow.start': 1, _id: 1 }).select(select).lean()
     || await Booking.findOne({ customerId, status: 'completed', customerConfirmedAt: null })
@@ -198,14 +230,31 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
   const [service, technician, pool] = await Promise.all([
     ServiceCategory.findById(next.serviceCategoryId, 'name').lean(),
     next.technicianId && User.findById(next.technicianId, 'name').lean(),
-    next.poolId && ServicePool.findById(next.poolId, 'status pricing.memberCount lockCutoffTime aggregateTimeWindow routeOrder.bookingId routeOrder.estimatedServiceStart').lean(),
+    next.poolId && ServicePool.findById(next.poolId, 'status maxCapacity pricing lockCutoffTime aggregateTimeWindow members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
   ]);
   const stop = pool?.routeOrder?.find(item => String(item.bookingId) === String(next._id));
+  let visitsAhead = null;
+  if (pool && ['accepted', 'in_progress'].includes(pool.status) && ['accepted', 'assigned'].includes(next.status)) {
+    const active = pool.members.filter(member => member.status === 'active');
+    const bookings = await Booking.find({ _id: { $in: active.map(member => member.bookingId) } }, 'status stopSequence').lean();
+    const byId = new Map(bookings.map(item => [String(item._id), item]));
+    const planned = new Map(pool.routeOrder.map(item => [String(item.bookingId), item.sequenceIndex]));
+    const remaining = pool.members.map((member, index) => {
+      const id = String(member.bookingId);
+      const booking = member.status === 'active' ? byId.get(id) : null;
+      return { id, status: booking?.status, order: planned.get(id) ?? (booking?.stopSequence || index + 1) };
+    }).filter(item => item.status && !['completed', 'cancelled'].includes(item.status)).sort((a, b) => a.order - b.order);
+    const position = remaining.findIndex(item => item.id === String(next._id));
+    if (position >= 0) visitsAhead = position;
+  }
+  const nextPrice = pool?.status === 'forming' && pool.pricing.memberCount < pool.maxCapacity
+    ? calculatePoolPricing({ basePrice: pool.pricing.individualBasePrice, memberCount: pool.pricing.memberCount + 1 }).finalPricePerMember : null;
   return sendSuccess(res, { data: {
+    visitsAhead, closingPriceLimit: next.closingPriceLimit, serviceCategoryId: next.serviceCategoryId,
     id: next._id, service: next.specificService || service?.name, status: next.status,
     price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
     window: pool?.aggregateTimeWindow || next.timeWindow,
-    pool: pool && { status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
+    pool: pool && { id: pool._id, nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
   } });
 });
 
@@ -336,6 +385,7 @@ export const updateMyBooking = asyncHandler(async (req, res) => {
         if (bookingMode === 'individual') {
           const category = await ServiceCategory.findById(booking.serviceCategoryId).session(session);
           if (!category) throw new AppError(404, 'Service unavailable.', 'SERVICE_NOT_FOUND');
+          booking.closingPriceLimit = undefined;
           booking.estimatedPrice = category.baseIndividualPrice;
         }
         rematchedNeeded = true;
