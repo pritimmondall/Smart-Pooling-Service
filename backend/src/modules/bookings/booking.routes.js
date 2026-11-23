@@ -4,6 +4,7 @@ import {
   quoteBooking,
   confirmCompletion,
   getMyBookings,
+  getDashboardBooking,
   getBookingById,
   updateMyBooking,
   cancelMyBooking,
@@ -27,6 +28,7 @@ router.post(
   createBooking
 );
 router.post('/:id/confirm-completion', authorizeRoles('customer'), validateObjectIdParam('id'), confirmCompletion);
+router.get('/dashboard', authorizeRoles('customer'), getDashboardBooking);
 router.get('/my', authorizeRoles('customer'), getMyBookings);
 router.patch('/:id', authorizeRoles('customer'), validateObjectIdParam('id'), updateMyBooking);
 router.patch('/:id/cancel', authorizeRoles('customer'), validateObjectIdParam('id'), cancelMyBooking);

@@ -268,7 +268,7 @@ export const acceptAssignedJob = asyncHandler(async (req, res) => {
         const planned = plan && pool.members.filter(m => m.status === 'active').length === plan.stops.length
           && plan.stops.every(s => pool.members.some(m => m.status === 'active' && String(m.bookingId) === String(s.bookingId)));
         if (planned) {
-          pool.routeOrder = plan.stops.map(({ bookingId, sequenceIndex }) => ({ bookingId, sequenceIndex }));
+          pool.routeOrder = plan.routeOrder;
           for (const stop of plan.stops) {
             await Booking.updateOne({ _id: stop.bookingId }, { $set: {
               stopSequence: stop.sequenceIndex,

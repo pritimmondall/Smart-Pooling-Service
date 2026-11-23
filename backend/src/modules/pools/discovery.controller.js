@@ -31,13 +31,15 @@ export const nearbyPools = asyncHandler(async (req, res) => {
         members.some(m => String(m.customerId) === String(req.user._id))) continue;
     const area = poolScopes[pool.poolScope];
     const canJoinFromLocation = members.every(m => haversineDistanceKm(point, m.location) <= (area?.radiusKm || 0.2));
+    const pricing = calculatePoolPricing({ basePrice: pool.serviceCategoryId.baseIndividualPrice, memberCount: members.length + 1 });
     items.push({
       id: pool._id, serviceCategoryId: pool.serviceCategoryId._id, name: pool.specificService || pool.serviceCategoryId.name,
       specificService: pool.specificService, scope: pool.poolScope, area: area?.label || '200 m',
       canJoinFromLocation,
       members: members.length, capacity: pool.maxCapacity, start: pool.aggregateTimeWindow.start,
       distanceMeters: Math.round(haversineDistanceKm(point, pool.centroidLocation) * 1000),
-      price: calculatePoolPricing({ basePrice: pool.serviceCategoryId.baseIndividualPrice, memberCount: members.length + 1 }).finalPricePerMember,
+      price: pricing.finalPricePerMember, individualPrice: pricing.individualBasePrice,
+      savings: pricing.totalSavingsPerMember, discountPercentage: pricing.discountPercentage,
     });
   }
   return sendSuccess(res, { data: items.sort((a,b) => a.distanceMeters - b.distanceMeters) });

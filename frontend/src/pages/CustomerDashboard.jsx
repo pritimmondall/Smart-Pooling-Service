@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MapPin, CalendarPlus } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import useNearbyPools from '../components/common/useNearbyPools.js';
+
+import DashboardBooking from '../components/common/DashboardBooking.jsx';
+import DashboardPoolMatcher from '../components/common/DashboardPoolMatcher.jsx';
 
 const fallbackLocation = { lat: 22.5015, lng: 88.3531 };
 
@@ -54,12 +57,8 @@ export default function CustomerDashboard() {
   }
 
   return <main className="space-y-6 max-w-4xl mx-auto">
-    <section className="glass-panel rounded-3xl p-6 space-y-4">
-      <h1 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Nearby pools</h1>
-      <label className="block text-sm font-medium max-w-sm">Search range: {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'}
-        <input type="range" className="w-full mt-2 accent-emerald-600" min="100" max="1000" step="50" value={rangeMeters} onChange={event => setRangeMeters(Number(event.target.value))} />
-        <span className="flex justify-between text-xs text-slate-500"><span>100 m</span><span>1 km</span></span>
-      </label>
+    <DashboardBooking />
+    <DashboardPoolMatcher location={location}>
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <p>{location ? `Searching near ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}${saved && location.lat === saved[1] && location.lng === saved[0] ? ' (saved alert location)' : ''}` : 'Choose where you want service to find nearby pools.'}</p>
         <button type="button" className="text-emerald-700 underline" onClick={() => setEditingLocation(open => !open)}>
@@ -77,22 +76,27 @@ export default function CustomerDashboard() {
         <LocationPickerMap value={location || fallbackLocation} onChange={setLocation} height="260px" />
         {saved && <button type="button" className="text-sm text-emerald-700 underline" onClick={() => setLocation({ lat: saved[1], lng: saved[0] })}>Use saved alert location</button>}
       </div>}
+    </DashboardPoolMatcher>
+    <section className="glass-panel rounded-3xl p-6 space-y-4">
+      <h2 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Nearby pools</h2>
+      <label className="block text-sm font-medium max-w-sm">Search range: {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'}
+        <input type="range" className="w-full mt-2 accent-emerald-600" min="100" max="1000" step="50" value={rangeMeters} onChange={event => setRangeMeters(Number(event.target.value))} />
+        <span className="flex justify-between text-xs text-slate-500"><span>100 m</span><span>1 km</span></span>
+      </label>
       {location && loading && <p>Finding nearby pools…</p>}
       {error && <p role="alert">{error}</p>}
       {!location && <p>Select a location on the map to search for pools.</p>}
       {location && !loading && !error && items?.length === 0 && <p>No open pools within {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'} of this location. Try another service location or a larger range.</p>}
       {items?.map(pool => <article key={pool.id} className="border rounded-xl p-4 flex items-center justify-between gap-3">
-        <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} joining area · {pool.members}/{pool.capacity} booked · ₹{pool.price} each after joining</p>
+        <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} joining area · {pool.members}/{pool.capacity} booked</p>
+          <p>Individual ₹{pool.individualPrice} · <strong>₹{pool.price} if you join</strong> · save ₹{pool.savings} ({pool.discountPercentage}%)</p>
+          <p className="text-sm">{pool.members + 1} members including you after joining</p>
           {pool.canJoinFromLocation === false && <p className="text-sm text-amber-700">Visible in your search range; choose a service location within this pool's joining area to join.</p>}
         </div>
         {pool.canJoinFromLocation !== false && <Link className="glass-button-primary px-4 py-2" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool</Link>}
       </article>)}
       <p className="text-xs text-slate-500">Your search range includes pools in your apartment area and other buildings. Joining depends on the pool's distance limit.</p>
     </section>
-    <section className="glass-panel rounded-3xl p-6 space-y-3">
-      <h2 className="font-bold text-xl flex items-center gap-2"><CalendarPlus className="text-emerald-600"/>Manual booking</h2>
-      <p>Choose a service to start a pool or book an individual visit.</p>
-      <Link className="glass-button-primary px-4 py-2" to="/create-booking">Choose a service</Link>
-    </section>
+    <Link className="inline-block text-emerald-700 underline" to="/create-booking">Create a pool with a specific joining area</Link>
   </main>;
 }

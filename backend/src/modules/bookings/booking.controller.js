@@ -52,8 +52,7 @@ function parseTimeWindow(timeWindow) {
 }
 
 /**
- * Creates a new pending customer service request/booking.
- * Service pool matching and dynamic pooled pricing will attach in Phase 4.
+ * Estimates the price using the same ranked candidates used at booking time.
  */
 export const quoteBooking = asyncHandler(async (req, res) => {
   const { serviceCategoryId, location, timeWindow } = req.body;
@@ -61,7 +60,7 @@ export const quoteBooking = asyncHandler(async (req, res) => {
   const category = await ServiceCategory.findOne({ _id: serviceCategoryId, isActive: true });
   if (!category) throw new AppError(404, 'Service unavailable.', 'SERVICE_NOT_FOUND');
   const candidates = await findCompatiblePools({
-    customerId: req.user._id, serviceCategoryId, location: parseGeoInput(location), timeWindow: parseTimeWindow(timeWindow),
+    customerId: req.user._id, serviceCategoryId, specificService: req.body.specificService, location: parseGeoInput(location), timeWindow: parseTimeWindow(timeWindow),
   });
   const [candidate] = candidates;
   const pricing = calculatePoolPricing({
@@ -73,7 +72,11 @@ export const quoteBooking = asyncHandler(async (req, res) => {
     memberCount: candidate.activeMembersCount,
     pricing: calculatePoolPricing({ basePrice: category.baseIndividualPrice, memberCount: candidate.activeMembersCount + 1 }),
   }));
-  return sendSuccess(res, { data: { ...pricing, nearbyPools } });
+  const recommendedMatch = candidate ? {
+    distanceMeters: Math.round(candidate.distanceKm * 1000),
+    overlapMinutes: Math.floor((candidate.newIntersection.end - candidate.newIntersection.start) / 60000),
+  } : null;
+  return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch } });
 });
 
 export const createBooking = asyncHandler(async (req, res) => {
@@ -133,7 +136,7 @@ export const createBooking = asyncHandler(async (req, res) => {
   const scopeKey = bookingMode === 'pool' ? (target ? target.poolScope : req.body.poolScope) : undefined;
   const scope = scopeKey === undefined ? null : getScope(scopeKey);
   const building = scopeKey === 'building' ? buildingKey(req.body.building) : undefined;
-  if (scope && (!specificService || (scopeKey === 'building' && !target && !building))) {
+  if (scope && (!specificService || (scopeKey === 'building' && !building))) {
     throw new AppError(400, 'Select a service and enter the building name for an apartment-area pool.', 'VALIDATION_ERROR');
   }
   const parsedWindow = target ? target.aggregateTimeWindow : scope
@@ -181,6 +184,29 @@ export const createBooking = asyncHandler(async (req, res) => {
       : 'Individual booking created.',
     data: freshBooking,
   });
+});
+
+export const getDashboardBooking = asyncHandler(async (req, res) => {
+  const customerId = req.user._id;
+  const select = 'specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
+  const next = await Booking.findOne({ customerId, status: { $nin: ['completed', 'cancelled'] } })
+    .sort({ 'timeWindow.start': 1, _id: 1 }).select(select).lean()
+    || await Booking.findOne({ customerId, status: 'completed', customerConfirmedAt: null })
+      .sort({ updatedAt: -1 }).select(select).lean();
+  if (!next) return sendSuccess(res, { data: null });
+
+  const [service, technician, pool] = await Promise.all([
+    ServiceCategory.findById(next.serviceCategoryId, 'name').lean(),
+    next.technicianId && User.findById(next.technicianId, 'name').lean(),
+    next.poolId && ServicePool.findById(next.poolId, 'status pricing.memberCount lockCutoffTime aggregateTimeWindow routeOrder.bookingId routeOrder.estimatedServiceStart').lean(),
+  ]);
+  const stop = pool?.routeOrder?.find(item => String(item.bookingId) === String(next._id));
+  return sendSuccess(res, { data: {
+    id: next._id, service: next.specificService || service?.name, status: next.status,
+    price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
+    window: pool?.aggregateTimeWindow || next.timeWindow,
+    pool: pool && { status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
+  } });
 });
 
 /**

@@ -22,7 +22,7 @@
     "test:phase5a2:step4": "node --test tests/phase5a2-step4-stop-progression.test.js",
     "test:phase5a2:step5": "node --test tests/phase5a2-step5-customer-rating.test.js",
     "test:atlas": "node --test tests/phase5a-atlas-integration.js",
-    "test:all": "node --test --test-concurrency=1 tests/*.test.js tests/phase5a-integration.js",
+    "test:all": "node --test --test-concurrency=1 tests/*.test.js tests/phase5a-integration.js tests/pool-concurrent-creation.js",
     "verify:atlas": "node src/scripts/verify-atlas.js"
   },
   "dependencies": {

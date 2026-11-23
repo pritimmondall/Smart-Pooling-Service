@@ -41,6 +41,8 @@ export async function planAssignedPool(id, profile) {
   const savedMeters = Math.max(0, route.separateDispatchMeters - route.totalTravelDistance.meters);
   return {
     provider: route.provider, savedMeters, costPerKm: env.travelCostPerKm,
+    routeOrder: route.stops.map(({ bookingId, sequenceIndex, estimatedArrival, estimatedServiceStart, estimatedServiceEnd }) =>
+      ({ bookingId, sequenceIndex, estimatedArrival, estimatedServiceStart, estimatedServiceEnd })),
     stops: allocateSavings(savedMeters, env.travelCostPerKm, route.stops),
   };
 }

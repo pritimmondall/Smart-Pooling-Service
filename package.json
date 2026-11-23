@@ -5,6 +5,7 @@
     "setup": "npm ci --prefix backend && npm ci --prefix frontend",
     "build": "npm run build --prefix frontend",
     "start": "npm start --prefix backend",
+    "demo:verify": "npm run build && NODE_ENV=test node --test frontend/tests/academic-demo.mjs",
     "test": "npm run test:all --prefix backend && npm test --prefix frontend"
   }
 }

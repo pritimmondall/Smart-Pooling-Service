@@ -117,7 +117,9 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
     const visibleTower = (await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=0.5')).data.find(p => p.id === tower.poolId._id);
     assert.equal(visibleTower?.canJoinFromLocation, false);
     const join = { ...manual, targetPoolId: tower.poolId._id, location: near };
-    const member = (await request(neighbor, '/bookings', 'POST', { ...join, building: 'Tower B' }, 201)).data;
+    await request(neighbor, '/bookings', 'POST', { ...join, building: 'Tower B' }, 409);
+    await request(neighbor, '/bookings', 'POST', join, 400);
+    const member = (await request(neighbor, '/bookings', 'POST', { ...join, building: ' tower   A ' }, 201)).data;
     assert.equal(member.estimatedPrice, 450);
     assert.equal((await request(neighbor, `/bookings/${member._id}`)).data.visitPosition, 2);
     for (const [scope, capacity] of [['200m',6],['500m',4],['1km',2]]) {

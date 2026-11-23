@@ -1,7 +1,6 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import mongoose from 'mongoose';
-import { validateEnv } from '../src/config/env.js';
+import { MongoMemoryReplSet } from 'mongodb-memory-server';
 import { connectDB, disconnectDB } from '../src/config/db.js';
 import {
   User,
@@ -9,23 +8,28 @@ import {
   Booking,
   ServicePool,
   PoolMembership,
-  PoolClusterLock,
 } from '../src/models/index.js';
 import { matchAndAssignBooking } from '../src/modules/pools/matching.service.js';
 
-describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', () => {
+describe('Phase 4B Concurrent Compatible Pool Creation Suite', () => {
   const TEST_PREFIX = `__CONCURR_CREATE_${Date.now()}`;
   let category;
   let customers = [];
+  let database;
+  let round = 0;
 
   before(async () => {
-    validateEnv();
-    await connectDB();
-    await cleanup();
+    database = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+    await connectDB(database.getUri());
+  });
+
+  beforeEach(async () => {
+    round++;
+    customers = [];
 
     category = await ServiceCategory.create({
       name: 'Concurrent Creation Category',
-      slug: `${TEST_PREFIX.toLowerCase()}_cat`,
+      slug: `${TEST_PREFIX.toLowerCase()}_cat_${round}`,
       description: 'Testing race conditions when 0 pools exist initially',
       baseIndividualPrice: 600,
       estimatedDurationMins: 45,
@@ -38,8 +42,8 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
     for (let i = 1; i <= 4; i++) {
       const u = await User.create({
         name: `Race Customer ${i}`,
-        email: `${TEST_PREFIX.toLowerCase()}_u${i}@example.com`,
-        phone: `+91977700${String(i).padStart(4, '0')}`,
+        email: `${TEST_PREFIX.toLowerCase()}_${round}_u${i}@example.com`,
+        phone: `+9197770${round}${String(i).padStart(4, '0')}`,
         passwordHash: '$2a$10$abcdefghijklmnopqrstuvwxyz123456',
         role: 'customer',
       });
@@ -48,29 +52,12 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
   });
 
   after(async () => {
-    await cleanup();
     await disconnectDB();
+    await database?.stop();
   });
 
-  async function cleanup() {
-    await User.deleteMany({ email: { $regex: new RegExp(TEST_PREFIX, 'i') } });
-    await ServiceCategory.deleteMany({ slug: { $regex: new RegExp(TEST_PREFIX, 'i') } });
-    await Booking.deleteMany({ notes: { $regex: new RegExp(TEST_PREFIX, 'i') } });
-    if (category) {
-      await ServicePool.deleteMany({ serviceCategoryId: category._id });
-    }
-    await PoolMembership.deleteMany({
-      customerId: { $in: customers.map((c) => c._id) },
-    });
-    await PoolClusterLock.deleteMany({ serviceCategoryId: category?._id });
-  }
-
-  it('Start with 0 pools: Simultaneous compatible requests from 3 customers create EXACTLY 1 shared pool, NOT multiple duplicate pools', async () => {
-    // Verify 0 pools exist initially for this category
-    const initialPoolCount = await ServicePool.countDocuments({ serviceCategoryId: category._id });
-    assert.equal(initialPoolCount, 0, 'Must start with 0 pools');
-
-    // Create 3 compatible bookings nearby (within 300m) with identical time window
+  async function createCompatibleBookings() {
+    // Create 3 compatible bookings nearby (within 160 m) with identical time window
     const startTime = new Date(Date.now() + 24 * 3600 * 1000);
     const endTime = new Date(Date.now() + 27 * 3600 * 1000);
 
@@ -80,7 +67,7 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
         serviceCategoryId: category._id,
         location: {
           type: 'Point',
-          coordinates: [88.3531 + idx * 0.001, 22.5015 + idx * 0.001],
+          coordinates: [88.3531 + idx * 0.0005, 22.5015 + idx * 0.0005],
         },
         addressText: `Simultaneous Address ${idx + 1}, Kolkata`,
         timeWindow: { start: startTime, end: endTime },
@@ -91,7 +78,15 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
       })
     );
 
-    const createdBookings = await Promise.all(bookingPromises);
+    return Promise.all(bookingPromises);
+  }
+
+  it('Start with 0 pools: Simultaneous compatible requests from 3 customers create EXACTLY 1 shared pool, NOT multiple duplicate pools', async () => {
+    // Verify 0 pools exist initially for this category
+    const initialPoolCount = await ServicePool.countDocuments({ serviceCategoryId: category._id });
+    assert.equal(initialPoolCount, 0, 'Must start with 0 pools');
+
+    const createdBookings = await createCompatibleBookings();
     assert.equal(createdBookings.length, 3);
 
     // Fire matchAndAssignBooking for ALL 3 bookings simultaneously in parallel!
@@ -141,7 +136,8 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
   });
 
   it('Two concurrent requests attempting to fill the last available slot (capacity = 4) cannot exceed capacity', async () => {
-    // Current pool has 3 members, maxCapacity is 4. Exactly 1 slot remains!
+    const initialBookings = await createCompatibleBookings();
+    for (const booking of initialBookings) await matchAndAssignBooking(booking._id);
     const pool = await ServicePool.findOne({ serviceCategoryId: category._id });
     assert.equal(pool.members.filter((m) => m.status === 'active').length, 3);
     assert.equal(pool.maxCapacity, 4);
@@ -183,7 +179,7 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
     });
 
     // Fire both matchAndAssignBooking calls concurrently to race for the 1 remaining slot
-    const results = await Promise.all([
+    const contenders = await Promise.all([
       matchAndAssignBooking(booking4._id),
       matchAndAssignBooking(booking5._id),
     ]);
@@ -204,7 +200,6 @@ describe('Phase 4B Concurrent Compatible Pool Creation Suite (MongoDB Atlas)', (
     const allPools = await ServicePool.find({ serviceCategoryId: category._id });
     assert.equal(allPools.length, 2, 'Total pools should now be 2');
 
-    // Clean up extra customer
-    await User.deleteOne({ _id: extraCustomer._id });
+    assert.equal(contenders.filter(result => result.pool.id === pool.id).length, 1);
   });
 });

@@ -114,7 +114,7 @@ export async function findCompatiblePools({
   location,
   timeWindow,
   customerId,
-  targetPoolId, specificService,
+  targetPoolId, specificService, buildingKey,
   session = null,
 }) {
   const now = new Date();
@@ -150,6 +150,7 @@ export async function findCompatiblePools({
   for (const pool of candidatePools) {
     const radiusKm = pool.poolScope ? poolScopes[pool.poolScope].radiusKm : POOL_RADIUS_KM;
     if ((pool.specificService || '') !== (specificService || '')) continue;
+    if (pool.poolScope === 'building' && (!buildingKey || buildingKey !== pool.buildingKey)) continue;
     const activeMembers = pool.members.filter((m) => m.status === 'active');
 
     if (customerId && activeMembers.some(m => String(m.customerId) === String(customerId))) continue;
@@ -296,7 +297,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     serviceCategoryId: booking.serviceCategoryId,
     location: booking.location,
     customerId: booking.customerId,
-    specificService: booking.specificService, targetPoolId,
+    specificService: booking.specificService, buildingKey: booking.buildingKey, targetPoolId,
     timeWindow: booking.timeWindow,
     session,
   });
