@@ -37,7 +37,7 @@ export default function DashboardBooking() {
   if (!booking && !error) return null;
   const forming = booking?.pool?.status === 'forming';
   const completed = booking?.status === 'completed';
-  return <section aria-label="Your booking" className="glass-panel rounded-3xl p-5 space-y-2 border-l-4 border-emerald-500">
+  return <section aria-label="Your booking" className="pool-booking">
     {error && <p role="status">Booking updates unavailable. {error}</p>}
     {booking && <>
       <h2 className="font-bold text-lg">{completed ? 'Confirm your visit' : 'Your next booking'} · {booking.service}</h2>

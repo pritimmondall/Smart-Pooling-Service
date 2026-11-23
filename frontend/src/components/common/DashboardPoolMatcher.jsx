@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { bookingsApi, servicesApi } from '../../api/client.js';
 
+import { ArrowRight, SlidersHorizontal } from 'lucide-react';
+
 function localTime(hoursAhead) {
   const date = new Date(Date.now() + hoursAhead * 3600000);
   return new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -53,8 +55,8 @@ export default function DashboardPoolMatcher({ location, children }) {
       setError(err.message);
     } finally { setBusy(false); }
   }
-  return <section className="glass-panel rounded-3xl p-6 space-y-4">
-    <h1 className="font-bold text-2xl">Find my best pool</h1>
+  return <section className="pool-panel pool-finder">
+    <div className="pool-section-heading"><span className="pool-icon"><SlidersHorizontal/></span><h2>Pool finder</h2></div>
     {children}
     <form onSubmit={submit} className="space-y-4">
       <label className="block">Service<select className="glass-input w-full" required value={choice} onChange={e => setChoice(e.target.value)}>
@@ -64,7 +66,7 @@ export default function DashboardPoolMatcher({ location, children }) {
         <label>Preferred start<input type="datetime-local" className="glass-input w-full" value={start} required onChange={e => setStart(e.target.value)} /></label>
         <label>Preferred end<input type="datetime-local" className="glass-input w-full" value={end} required onChange={e => setEnd(e.target.value)} /></label>
       </div>
-      {quote && <div role="status" className="rounded-xl bg-emerald-50 p-4 space-y-1">
+      {quote && <div role="status" className="pool-quote">
         <h2 className="font-semibold">{quote.recommendedMatch ? selected.name + ' · compatible pool found' : 'Start the first pool for this visit'}</h2>
         {quote.recommendedMatch && <p>Pool centre {quote.recommendedMatch.distanceMeters} m away · {quote.recommendedMatch.overlapMinutes} minutes of shared availability</p>}
         <p>Individual ₹{quote.individualBasePrice} · <strong>₹{quote.finalPricePerMember} each after booking</strong></p>
@@ -73,8 +75,8 @@ export default function DashboardPoolMatcher({ location, children }) {
       </div>}
       {error && <p role="alert">{error}</p>}
       <div className="flex flex-wrap gap-4 items-center">
-        <button disabled={busy} className="glass-button-primary px-4 py-2">{busy ? 'Please wait…' : !quote ? 'Find my best pool' : quote.recommendedMatch ? 'Confirm pooled booking' : 'Start a pool'}</button>
-        <Link className="text-emerald-700 underline" to={'/create-booking?' + new URLSearchParams({
+        <button disabled={busy} className="pool-primary">{busy ? 'Please wait…' : !quote ? 'Find my best pool' : quote.recommendedMatch ? 'Confirm pooled booking' : 'Start a pool'} <ArrowRight size={16}/></button>
+        <Link className="pool-secondary" to={'/create-booking?' + new URLSearchParams({
           mode: 'individual', ...(selected && { serviceId: selected.id, service: selected.name }),
           ...(location && { lat: location.lat, lng: location.lng }), start, end,
         })}>Book individually</Link>

@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MapPin } from 'lucide-react';
+import { ArrowUpRight, House, LocateFixed, MapPin, Plus, Radio, UsersRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import useNearbyPools from '../components/common/useNearbyPools.js';
 
 import DashboardBooking from '../components/common/DashboardBooking.jsx';
 import DashboardPoolMatcher from '../components/common/DashboardPoolMatcher.jsx';
+
+import './CustomerDashboard.css';
 
 const fallbackLocation = { lat: 22.5015, lng: 88.3531 };
 
@@ -56,18 +58,36 @@ export default function CustomerDashboard() {
     }, { enableHighAccuracy: true, timeout: 10000 });
   }
 
-  return <main className="space-y-6 max-w-4xl mx-auto">
+  const radius = rangeMeters < 1000 ? `${rangeMeters} m` : '1 km';
+  return <div className="pool-home">
+    <header className="pool-hero">
+      <div className="pool-hero-copy">
+        <p className="pool-date">{new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</p>
+        <h1>Your neighbourhood<br/><em>service pools.</em></h1>
+        <p>Find a shared visit and compare your price before booking.</p>
+      </div>
+      <div className="pool-map-art" aria-hidden="true">
+        <div className="pool-map-grid"/><div className="pool-map-radius"/>
+        <span className="map-house map-house-one"><House/></span>
+        <span className="map-house map-house-two"><House/></span>
+        <span className="map-centre"><MapPin/></span>
+      </div>
+    </header>
     <DashboardBooking />
+    <div className="pool-workspace">
     <DashboardPoolMatcher location={location}>
-      <div className="flex flex-wrap items-center gap-3 text-sm">
-        <p>{location ? `Searching near ${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}${saved && location.lat === saved[1] && location.lng === saved[0] ? ' (saved alert location)' : ''}` : 'Choose where you want service to find nearby pools.'}</p>
-        <button type="button" className="text-emerald-700 underline" onClick={() => setEditingLocation(open => !open)}>
-          {editingLocation ? 'Hide location picker' : 'Change search location'}
+      <div className="pool-location">
+        <MapPin aria-hidden="true" size={18}/><div>
+        <strong>Service location</strong>
+        <p>{location ? `${saved && location.lat === saved[1] && location.lng === saved[0] ? 'Saved pin' : 'Selected pin'} · ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : 'Choose where you need service'}</p></div>
+        <button type="button" aria-expanded={editingLocation} className="pool-location-edit" onClick={() => setEditingLocation(open => !open)}>
+          {editingLocation ? 'Close' : 'Change'}
         </button>
-        <button type="button" className="text-emerald-700 underline" disabled={locating} onClick={useCurrentLocation}>{locating ? 'Finding your location…' : 'Use my current location'}</button>
+
       </div>
       {!editingLocation && lookup && <p role="status" className="text-sm">{lookup}</p>}
       {editingLocation && <div className="space-y-3 border rounded-xl p-4">
+        <button type="button" className="pool-current" disabled={locating} onClick={useCurrentLocation}><LocateFixed size={16}/>{locating ? 'Finding your location…' : 'Use my current location'}</button>
         <label className="block text-sm font-medium">Street address or landmark
           <input className="glass-input w-full mt-1" value={address} onChange={event => setAddress(event.target.value)} maxLength={300} placeholder="Search for a service location" />
         </label>
@@ -77,26 +97,27 @@ export default function CustomerDashboard() {
         {saved && <button type="button" className="text-sm text-emerald-700 underline" onClick={() => setLocation({ lat: saved[1], lng: saved[0] })}>Use saved alert location</button>}
       </div>}
     </DashboardPoolMatcher>
-    <section className="glass-panel rounded-3xl p-6 space-y-4">
-      <h2 className="text-xl font-bold flex items-center gap-2"><MapPin className="text-emerald-600"/>Nearby pools</h2>
-      <label className="block text-sm font-medium max-w-sm">Search range: {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'}
-        <input type="range" className="w-full mt-2 accent-emerald-600" min="100" max="1000" step="50" value={rangeMeters} onChange={event => setRangeMeters(Number(event.target.value))} />
-        <span className="flex justify-between text-xs text-slate-500"><span>100 m</span><span>1 km</span></span>
+    <section className="pool-panel pool-nearby">
+      <div className="pool-section-heading"><span className="pool-icon"><Radio/></span><h2>Nearby pools</h2></div>
+      <label className="pool-range">Search radius <strong>{radius}</strong>
+        <input type="range" min="100" max="1000" step="50" value={rangeMeters} onChange={event => setRangeMeters(Number(event.target.value))} />
       </label>
-      {location && loading && <p>Finding nearby pools…</p>}
+      {location && loading && <p role="status">Finding nearby pools…</p>}
       {error && <p role="alert">{error}</p>}
-      {!location && <p>Select a location on the map to search for pools.</p>}
-      {location && !loading && !error && items?.length === 0 && <p>No open pools within {rangeMeters < 1000 ? `${rangeMeters} m` : '1 km'} of this location. Try another service location or a larger range.</p>}
-      {items?.map(pool => <article key={pool.id} className="border rounded-xl p-4 flex items-center justify-between gap-3">
-        <div><h2 className="font-semibold">{pool.name}</h2><p className="text-sm">{pool.distanceMeters} m away · {pool.area} joining area · {pool.members}/{pool.capacity} booked</p>
-          <p>Individual ₹{pool.individualPrice} · <strong>₹{pool.price} if you join</strong> · save ₹{pool.savings} ({pool.discountPercentage}%)</p>
-          <p className="text-sm">{pool.members + 1} members including you after joining</p>
-          {pool.canJoinFromLocation === false && <p className="text-sm text-amber-700">Visible in your search range; choose a service location within this pool's joining area to join.</p>}
-        </div>
-        {pool.canJoinFromLocation !== false && <Link className="glass-button-primary px-4 py-2" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool</Link>}
+      {!location && <p className="pool-empty">Choose a service location to see open pools.</p>}
+      {location && !loading && !error && items?.length === 0 && <div className="pool-empty"><Radio aria-hidden="true"/><h3>No open pools within {radius}</h3><p>Widen your search or start a pool for your preferred service.</p></div>}
+      {items?.map(pool => <article key={pool.id} className="pool-offer">
+        <h3>{pool.name}</h3>
+        <p><MapPin size={14}/>{pool.distanceMeters} m away · {pool.area}</p>
+        <p><UsersRound size={14}/>{pool.members}/{pool.capacity} booked</p>
+        <div className="pool-offer-price"><del>₹{pool.individualPrice}</del> <strong>₹{pool.price} if you join</strong></div>
+        <p className="pool-saving">Save ₹{pool.savings} ({pool.discountPercentage}%)</p>
+        <small>{pool.members + 1} members including you after joining</small>
+        {pool.canJoinFromLocation === false ? <p>Outside this pool’s joining area.</p> :
+          <Link className="pool-join" to={`/create-booking?${new URLSearchParams({ poolId: pool.id, serviceId: pool.serviceCategoryId, lat: String(location.lat), lng: String(location.lng) })}`}>Join pool <ArrowUpRight size={16}/></Link>}
       </article>)}
-      <p className="text-xs text-slate-500">Your search range includes pools in your apartment area and other buildings. Joining depends on the pool's distance limit.</p>
+      <Link className="pool-custom" to="/create-booking"><Plus size={16}/> Create a pool with a custom area</Link>
     </section>
-    <Link className="inline-block text-emerald-700 underline" to="/create-booking">Create a pool with a specific joining area</Link>
-  </main>;
+    </div>
+  </div>;
 }
