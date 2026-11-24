@@ -20,13 +20,14 @@ test('three customers see a private visit sequence, follow the technician throug
   const service = await ServiceCategory.create({ name: 'AC service', slug: 'ac-service',
     baseIndividualPrice: 600, estimatedDurationMins: 15, maxPoolSize: 3 });
   const password = 'LocalDemo123!';
-  const accounts = await User.create(['First', 'Second', 'Third', 'Technician'].map((name, i) => ({
-    name, email: name.toLowerCase() + '@demo.example', passwordHash: password,
-    role: i === 3 ? 'technician' : 'customer',
-    poolAlertLocation: { type: 'Point', coordinates: [88.36, 22.5198 + i * 0.0007] },
+  const neighbors = await User.create(['Second', 'Third'].map((name, i) => ({
+    name, email: name.toLowerCase() + '@demo.example', passwordHash: password, role: 'customer',
+    poolAlertLocation: { type: 'Point', coordinates: [88.3531, 22.5015 + i * 0.0007] },
   })));
-  await TechnicianProfile.create({ userId: accounts[3]._id, serviceCategories: [service._id],
-    approvalStatus: 'approved', availabilityStatus: 'available', baseLocation: accounts[3].poolAlertLocation });
+  const admin = await User.create({ name: 'Reviewer', email: 'reviewer@test.example', passwordHash: password, role: 'admin' });
+  const newCustomerPin = [88.3531, 22.5018];
+  const customerAccounts = [neighbors[0], { email: 'customer@registration.example' }, neighbors[1]];
+  const pins = [Array.from(neighbors[0].poolAlertLocation.coordinates), newCustomerPin, Array.from(neighbors[1].poolAlertLocation.coordinates)];
   const server = createApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -49,7 +50,8 @@ test('three customers see a private visit sequence, follow the technician throug
         await page.click('button[type=submit]');
         await page.waitForFunction(expected => location.pathname === expected, {}, role === 'technician' ? '/technician/profile-setup' : '/');
         if (role === 'technician') {
-          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page.goto(origin + '/technician/jobs', { waitUntil: 'domcontentloaded' });
+          await page.waitForFunction(() => location.pathname === '/technician/profile-setup');
           await click(page, 'Save work profile');
           await page.waitForFunction(() => document.body.innerText.includes('Select at least one service field.'));
           await page.click('input[name=serviceCategories][value="' + service.id + '"]');
@@ -71,10 +73,32 @@ test('three customers see a private visit sequence, follow the technician throug
           assert.deepEqual(Array.from(profile.workingHours.daysOfWeek), [1, 2, 3, 4, 5]);
           assert.deepEqual(profile.serviceCategories.map(String), [service.id]);
           assert.deepEqual(Array.from(profile.baseLocation.coordinates), [88.3639, 22.5176]);
-          await page.waitForSelector('.tech-desk');
+          assert.match(await page.title(), /Technician dashboard/);
+          await page.waitForFunction(() => document.body.innerText.includes('awaiting admin approval'));
+          assert.equal(await page.$eval('option[value=available]', el => el.disabled), true);
+          const reviewer = await login(admin);
+          await click(reviewer, 'Approve technician');
+          await reviewer.waitForFunction(() => document.body.innerText.includes('New technician · approved'));
+          await reviewer.browserContext().close();
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page.waitForFunction(() => document.querySelector('option[value=available]')?.disabled === false);
+          await page.select('select[aria-label="Work availability"]', 'available');
+          await page.waitForFunction(() => document.querySelector('.desk-dot.available'));
+          await page.goto(origin + '/technician/jobs', { waitUntil: 'domcontentloaded' });
+          await page.waitForSelector('#assigned-work');
+          assert.equal(await page.$('.desk-day'), null);
         } else {
           assert.equal(profile, null);
           await page.waitForSelector('a[href="/create-booking"]');
+          await page.setRequestInterception(true);
+          const interruptSession = req => new URL(req.url()).pathname === '/api/v1/auth/me' ? req.abort() : req.continue();
+          page.on('request', interruptSession);
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await page.waitForFunction(() => document.body.innerText.includes('Retry connection'));
+          page.off('request', interruptSession);
+          await page.setRequestInterception(false);
+          await click(page, 'Retry connection');
+          await page.waitForSelector('.pool-home');
         }
       } finally {
         await context.close();
@@ -102,9 +126,35 @@ test('three customers see a private visit sequence, follow the technician throug
 
   const customers = [];
   let firstWindow;
-  for (const [index, account] of accounts.slice(0, 3).entries()) {
+  for (const [index, account] of customerAccounts.entries()) {
     const page = await login(account);
     customers.push(page);
+    if (index === 1) {
+      const preview = await page.waitForSelector('.pool-nearby .pool-join');
+      assert.equal((await preview.evaluate(el => el.textContent)).trim(), 'Check joining area');
+      const previewUrl = new URL(await preview.evaluate(el => el.href));
+      assert.equal(previewUrl.searchParams.has('lat'), false);
+      const detail = await page.browserContext().newPage();
+      await detail.goto(previewUrl.href, { waitUntil: 'domcontentloaded' });
+      await detail.waitForFunction(() => document.body.innerText.includes('Choose your service location to check this pool.'));
+      assert.equal(await detail.$eval('button[type=submit], button.glass-button-primary', button => button.disabled), true);
+      await click(detail, 'Green Park / Jadavpur');
+      await detail.waitForFunction(() => document.body.innerText.includes('₹540 after joining'));
+      await detail.close();
+      await page.waitForSelector('.pool-location');
+      const coords = await page.$$('.pool-finder input[type=number]');
+      for (const [i, value] of [newCustomerPin[1], newCustomerPin[0]].entries()) {
+        await coords[i].evaluate((input, value) => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(value));
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+      }
+      await click(page, 'Save pin for nearby pools and invitations');
+      await page.waitForFunction(() => document.body.innerText.includes('Location saved for nearby pools'));
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.waitForSelector('.pool-nearby .pool-join');
+      assert.ok(await page.$eval('.pool-nearby .pool-join', el => el.textContent.includes('Join pool')));
+    }
     const value = service.id + '/AC service';
     await page.waitForSelector('option[value="' + value + '"]');
     await page.select('form select', value);
@@ -169,7 +219,7 @@ test('three customers see a private visit sequence, follow the technician throug
     }
   }
   await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 each'));
-  const tech = await login(accounts[3]);
+  const tech = await login({ email: 'technician@registration.example' });
   await tech.waitForFunction(() => document.body.innerText.includes('/hour estimated gross'));
   await click(tech, 'Claim job');
   for (const page of customers) {
@@ -181,7 +231,7 @@ test('three customers see a private visit sequence, follow the technician throug
   await click(tech, 'Report visit issue');
   await tech.waitForFunction(() => document.body.innerText.includes('Other visits in this pool will continue.'));
   await tech.keyboard.press('Escape');
-  await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · Technician') && document.body.innerText.includes('Estimated visit ·') && /visit before yours|Your visit is next/.test(document.body.innerText));
+  await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · New technician') && document.body.innerText.includes('Estimated visit ·') && /visit before yours|Your visit is next/.test(document.body.innerText));
   const byVisit = new Map();
   for (const [index, page] of customers.entries()) {
     await page.waitForSelector('.customer-visit-map.leaflet-container');
@@ -196,10 +246,10 @@ test('three customers see a private visit sequence, follow the technician throug
     assert.deepEqual(route.stops.map(stop => stop.number), [1, 2, 3]);
     assert.equal(route.stops.filter(stop => stop.yours).length, 1);
     const own = route.stops.find(stop => stop.yours);
-    assert.deepEqual(own.point, Array.from(accounts[index].poolAlertLocation.coordinates));
+    assert.deepEqual(own.point, pins[index]);
     for (const other of route.stops.filter(stop => !stop.yours)) {
       assert.deepEqual(Object.keys(other).sort(), ['number', 'point', 'status', 'yours']);
-      assert.ok(accounts.every(account => JSON.stringify(other.point) !== JSON.stringify(account.poolAlertLocation.coordinates)));
+      assert.ok(pins.every(pin => JSON.stringify(other.point) !== JSON.stringify(pin)));
     }
     byVisit.set(own.number, page);
     await click(page, 'Hide map');

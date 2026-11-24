@@ -46,7 +46,7 @@ export default function Navbar({ onToggleSidebar }) {
                     : 'text-emerald-700 bg-emerald-50 border-emerald-200/60'
                 }`}
               >
-                {user?.role === 'technician' ? 'Technician' : 'Customer'}
+                {{ technician: 'Technician', admin: 'Admin', customer: 'Customer' }[user?.role]}
               </span>
             </div>
           </Link>

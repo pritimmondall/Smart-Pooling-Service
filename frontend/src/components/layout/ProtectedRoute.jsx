@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import LoadingSpinner from '../common/LoadingSpinner.jsx';
 
 export default function ProtectedRoute({ allowedRoles }) {
-  const { user, isAuthenticated, loading } = useAuth();
+  const { user, token, isAuthenticated, loading, authError, refreshUser, logout } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -15,6 +15,11 @@ export default function ProtectedRoute({ allowedRoles }) {
     );
   }
 
+  if (token && !user && authError) return <main className="max-w-md mx-auto mt-12 p-5 space-y-4">
+    <p role="alert">{authError}</p>
+    <button className="glass-button-primary" onClick={refreshUser}>Retry connection</button>
+    <button className="underline" onClick={logout}>Sign out</button>
+  </main>;
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }

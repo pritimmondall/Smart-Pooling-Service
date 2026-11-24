@@ -31,7 +31,6 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
     <Link to="/technician/profile-setup" className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-800">
       <SlidersHorizontal size={15}/>{profile?.serviceCategories?.length ? 'Edit work preferences' : 'Complete your work profile'}
     </Link>
-    {profile?.approvalStatus === 'pending' && <p className="text-sm text-slate-600">Admin approval is pending. You can claim work after approval.</p>}
     {error && <p role="alert">{error}</p>}
 
     {loaded && linkedId && !linkedVisible && <p id={'work-' + linkedId} role="status">This request is no longer forming or available for you to claim. Check Assigned Jobs for work you already claimed.</p>}

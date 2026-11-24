@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   Compass,
@@ -33,9 +33,12 @@ const TECHNICIAN_NAV_ITEMS = [
 
 export default function Sidebar({ isOpen, onClose }) {
   const { user } = useAuth();
+  const { pathname } = useLocation();
   const { unreadCount } = useNotifications();
   const isTechnician = user?.role === 'technician';
-  const navItems = isTechnician ? TECHNICIAN_NAV_ITEMS : CUSTOMER_NAV_ITEMS;
+  const isAdmin = user?.role === 'admin';
+  const navItems = isAdmin ? [{ to: '/', label: 'Technician approvals', icon: Wrench, end: true },
+    ...CUSTOMER_NAV_ITEMS.filter(item => ['/notifications','/profile'].includes(item.to))] : isTechnician ? TECHNICIAN_NAV_ITEMS : CUSTOMER_NAV_ITEMS;
 
   return (
     <>
@@ -67,7 +70,7 @@ export default function Sidebar({ isOpen, onClose }) {
           </div>
 
           {/* Quick Action CTA */}
-          <div className="mb-6">
+          {!isAdmin && <div className="mb-6">
             {isTechnician ? (
               <NavLink
                 to="/technician/jobs"
@@ -87,7 +90,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 New Service Booking
               </NavLink>
             )}
-          </div>
+          </div>}
 
           {/* Nav Links */}
           <nav className="space-y-1">
@@ -96,7 +99,7 @@ export default function Sidebar({ isOpen, onClose }) {
               return (
                 <NavLink
                   key={item.to}
-                  to={item.to}
+                  to={isTechnician && item.to === '/' && pathname === '/technician/dashboard' ? pathname : item.to}
                   end={item.end}
                   onClick={() => onClose?.()}
                   className={({ isActive }) =>
@@ -130,7 +133,7 @@ export default function Sidebar({ isOpen, onClose }) {
         </div>
 
         {/* Footer info card */}
-        <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 text-[11px] text-slate-500">
+        {!isAdmin && <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 text-[11px] text-slate-500">
           <p className="font-semibold text-slate-700">
             {isTechnician ? 'Technician Field Portal' : 'Service Pooling Mode'}
           </p>
@@ -139,7 +142,7 @@ export default function Sidebar({ isOpen, onClose }) {
               ? 'Multi-stop road route optimization, live dispatch updates, and workload capacity management.'
               : 'Save up to 30% by pooling nearby service bookings with compatible neighbors.'}
           </p>
-        </div>
+        </div>}
       </aside>
     </>
   );

@@ -29,6 +29,11 @@ export default function RegisterPage() {
     e.preventDefault();
     setError(null);
 
+    if (formData.name.trim().length < 2) {
+      setError('Enter a name with at least two characters.');
+      return;
+    }
+
     if (formData.password.length < 6) {
       setError('Password must be at least 6 characters long.');
       return;
@@ -115,7 +120,7 @@ export default function RegisterPage() {
                 <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
-                  name="name"
+                  name="name" minLength={2} maxLength={100} autoComplete="name"
                   required
                   placeholder="e.g. Priyanshu Sen"
                   value={formData.name}
@@ -151,7 +156,7 @@ export default function RegisterPage() {
                 <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="tel"
-                  name="phone"
+                  name="phone" maxLength={20} autoComplete="tel"
                   placeholder="+91-9876543210"
                   value={formData.phone}
                   onChange={handleChange}

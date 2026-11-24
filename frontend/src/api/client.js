@@ -54,7 +54,7 @@ async function request(endpoint, options = {}) {
     const code = errorData.code || 'REQUEST_FAILED';
     const details = errorData.details;
 
-    if (response.status === 401) {
+    if (response.status === 401 && token && token === localStorage.getItem('smartpool_token') && endpoint !== '/auth/login') {
       window.dispatchEvent(new CustomEvent('smartpool:unauthorized'));
     }
 
@@ -153,6 +153,8 @@ export const notificationsApi = {
 
 // Technicians API
 export const techniciansApi = {
+  pendingApplications: page => api.get('/technicians?approvalStatus=pending&page=' + page),
+  reviewApplication: (id, approvalStatus) => api.patch(`/technicians/${id}/approval`, { approvalStatus }),
   opportunities: () => api.get('/technicians/me/opportunities'),
   claim: (id, kind) => api.post(`/technicians/me/opportunities/${id}/claim`, { kind }),
   getEarnings: () => api.get('/technicians/me/earnings?timezone=' + encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)),

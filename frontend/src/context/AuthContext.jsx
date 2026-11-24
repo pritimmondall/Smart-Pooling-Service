@@ -26,6 +26,7 @@ export function AuthProvider({ children }) {
     try {
       setLoading(true);
       const res = await authApi.getMe();
+      if (storedToken !== localStorage.getItem('smartpool_token')) return;
       if (res?.data?.user) {
         setUser(res.data.user);
         setAuthError(null);
@@ -33,8 +34,9 @@ export function AuthProvider({ children }) {
         logout();
       }
     } catch (err) {
-      console.warn('Authentication check failed:', err.message);
-      logout();
+      if (storedToken !== localStorage.getItem('smartpool_token')) return;
+      if (err.status === 401 || err.code === 'ACCOUNT_INACTIVE') logout();
+      else setAuthError('Your account could not be loaded. Check your connection and retry.');
     } finally {
       setLoading(false);
     }
@@ -73,6 +75,12 @@ export function AuthProvider({ children }) {
     return userData;
   };
 
+  const syncContactProfile = useCallback(async () => {
+    const { data } = await userApi.getProfile();
+    setUser(current => current?._id === data._id ? data : current);
+    return data;
+  }, []);
+
   const updateProfile = async (updates) => {
     const res = await userApi.updateProfile(updates);
     const updatedUser = res.data;
@@ -90,6 +98,7 @@ export function AuthProvider({ children }) {
     register,
     logout,
     updateProfile,
+    syncContactProfile,
     refreshUser: loadUser,
   };
 

@@ -22,7 +22,7 @@ import {
   ChevronUp,
   Info,
 } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import './TechnicianDashboard.css';
 import { useAuth } from '../context/AuthContext.jsx';
 import { techniciansApi } from '../api/client.js';
@@ -408,14 +408,23 @@ export default function TechnicianDashboard() {
   const availableBlocked = profile?.approvalStatus !== 'approved' || inProgress > 0 || currentWorkload >= maxCapacity;
   const fare = paise => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2,
     minimumFractionDigits: 0 }).format(paise / 100);
-  useEffect(() => {
-    if (!loading && pathname === '/technician/jobs') document.getElementById('assigned-work')?.scrollIntoView();
-  }, [pathname, loading]);
-
+  const jobsOnly = pathname === '/technician/jobs';
   if (loading) {
     return <LoadingSpinner label="Loading technician dashboard..." size="lg" className="py-24" />;
   }
 
+  if (!profile) return <div role="alert" className="glass-panel p-6 rounded-xl">
+    <p>{error || 'Your technician profile could not be loaded.'}</p>
+    <button className="underline" onClick={() => fetchData()}>Retry</button>
+  </div>;
+  if (profile.approvalStatus === 'pending' && !profile.serviceCategories.length && !activeCount) {
+    return <Navigate to="/technician/profile-setup" replace/>;
+  }
+  const workNotice = profile.approvalStatus === 'pending' ? 'Your work profile is awaiting admin approval. You can go available after it is approved.' :
+    profile.approvalStatus === 'rejected' ? 'Your technician application was declined. Contact your administrator for a review.' :
+    !profile.serviceCategories.length ? 'Choose your service fields in your work profile to find matching jobs.' :
+    profile.availabilityStatus !== 'available' && !inProgress && currentWorkload < maxCapacity ?
+      'Set Work availability to Available when you are ready to receive jobs.' : '';
   return (
     <div className="tech-desk">
       {/* Top Feedback Banner */}
@@ -456,7 +465,7 @@ export default function TechnicianDashboard() {
         <div><p className="desk-date"><Calendar size={15}/><time>{new Date().toLocaleDateString('en-IN', {
           weekday: 'long', day: 'numeric', month: 'long'
         })}</time></p>
-          <h1>Field dashboard</h1>
+          <h1>{jobsOnly ? 'Assigned jobs' : 'Field dashboard'}</h1>
           <p className="desk-identity">{[user?.name, profile?.zoneId?.name, profile?.serviceCategories?.map(c => c.name).join(', ')].filter(Boolean).join(' · ')}</p>
         </div>
         <div className="desk-controls">
@@ -475,7 +484,8 @@ export default function TechnicianDashboard() {
         </div>
       </header>
 
-      <div className="desk-metrics">
+      {workNotice && <p role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm">{workNotice}</p>}
+      {!jobsOnly && <><div className="desk-metrics">
         <div><span><Layers/>Active jobs</span><strong>{currentWorkload}<small> / {maxCapacity}</small></strong>
           <meter aria-label="Workload capacity" min="0" max={maxCapacity} value={currentWorkload}/></div>
         <a href="#assigned-work" onClick={() => { setStatusFilter('assigned'); setTypeFilter('all'); setSearchQuery(''); setJobPage(1); }}>
@@ -485,8 +495,8 @@ export default function TechnicianDashboard() {
       </div>
 
       <TechnicianDay routes={routes} processing={processingStops} onArrive={handleArriveStop} onStart={handleStartStop}
-        onComplete={handleCompleteStop} openIncident={openIncident} pending={pending}/>
-      {incident && <VisitException incident={incident} onClose={() => setIncident(null)} onRefresh={fetchData} onFeedback={showFeedback}/>}
+        onComplete={handleCompleteStop} openIncident={openIncident} pending={pending} workNotice={workNotice}/>
+
 
       <div className="desk-market">
         <TechnicianOpportunities opportunities={opportunities} profile={profile} onRefresh={fetchData}/>
@@ -498,9 +508,11 @@ export default function TechnicianDashboard() {
         </aside>
       </div>
 
+      </>}
+      {incident && <VisitException incident={incident} onClose={() => setIncident(null)} onRefresh={fetchData} onFeedback={showFeedback}/>}
       <section className="desk-jobs space-y-4" id="assigned-work">
         <div className="desk-section-title">
-          <h2>Assigned jobs</h2>
+          <h2>{jobsOnly ? 'Job history and assignments' : 'Assigned jobs'}</h2>
           <input type="search" aria-label="Search assigned jobs" placeholder="Search jobs, customers, addresses" value={searchQuery}
             onChange={e => { setJobPage(1); setSearchQuery(e.target.value); }} className="glass-input"/>
         </div>

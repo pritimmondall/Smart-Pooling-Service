@@ -7,6 +7,7 @@ import DashboardLayout from './components/layout/DashboardLayout.jsx';
 
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
+import TechnicianApprovals from './pages/TechnicianApprovals.jsx';
 import CustomerDashboard from './pages/CustomerDashboard.jsx';
 import TechnicianProfileSetup from './pages/TechnicianProfileSetup.jsx';
 import TechnicianDashboard from './pages/TechnicianDashboard.jsx';
@@ -19,6 +20,7 @@ import ProfilePage from './pages/ProfilePage.jsx';
 
 function RoleBasedOverview() {
   const { user } = useAuth();
+  if (user?.role === 'admin') return <TechnicianApprovals />;
   if (user?.role === 'technician') {
     return <TechnicianDashboard />;
   }

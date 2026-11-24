@@ -19,5 +19,6 @@ export default function useNearbyPools(params) {
     const timer = setInterval(refresh, 15000);
     return () => { active = false; clearTimeout(initial); clearInterval(timer); };
   }, [key]);
+  if (params == null) return { loading: false };
   return result.key === key ? result : { loading: true };
 }

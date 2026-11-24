@@ -5,7 +5,11 @@ import { useAuth } from './AuthContext.jsx';
 const NotificationContext = createContext(null);
 
 export function NotificationProvider({ children }) {
-  const { isAuthenticated } = useAuth();
+  const { user } = useAuth();
+  return <AccountNotifications key={user?._id || 'guest'} isAuthenticated={Boolean(user)}>{children}</AccountNotifications>;
+}
+
+function AccountNotifications({ isAuthenticated, children }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
