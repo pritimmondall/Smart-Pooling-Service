@@ -132,6 +132,7 @@ export const bookingsApi = {
 
 // Pools API
 export const poolsApi = {
+  updateCutoff: (id, lockCutoffTime) => api.patch(`/pools/${id}/lock-cutoff`, { lockCutoffTime }),
   nearby: params => api.get(`/pools/nearby?${new URLSearchParams(params)}`),
   getMyPools: () => api.get('/pools/my'),
   getById: (id) => api.get(`/pools/${id}`),

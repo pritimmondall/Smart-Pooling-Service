@@ -126,6 +126,32 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   assert.equal(history.meta.pagination.total, 6);
   assert.equal(history.meta.byStatus.completed, 1);
 
+  await t.test('only the active founder can change the deadline, which survives membership changes and drives locking', async () => {
+    const service = await ServiceCategory.create({ name: 'Cutoff test', slug: 'cutoff-test', baseIndividualPrice: 300,
+      estimatedDurationMins: 20, maxPoolSize: 4 });
+    const input = { ...payload, serviceCategoryId: service.id };
+    const booking = (await request(owner, '/bookings', 'POST', input, 201)).data;
+    const id = booking.poolId._id;
+    const path = `/pools/${id}/lock-cutoff`;
+    const edited = new Date(Date.parse(booking.poolId.lockCutoffTime) + 600000);
+    const patch = { lockCutoffTime: edited.toISOString() };
+    assert.equal((await request(owner, '/pools/' + id)).data.canEditCutoff, true);
+    await request(owner, path, 'PATCH', { lockCutoffTime: 'invalid' }, 400);
+    await request(owner, path, 'PATCH', { lockCutoffTime: new Date(0) }, 400);
+    await request(owner, path, 'PATCH', { lockCutoffTime: payload.timeWindow.end }, 400);
+    await request(owner, path, 'PATCH', patch);
+    const joined = (await request(neighbor, '/bookings', 'POST', input, 201)).data;
+    assert.equal(joined.poolId.lockCutoffTime, patch.lockCutoffTime);
+    assert.equal((await request(neighbor, '/pools/' + id)).data.canEditCutoff, false);
+    await request(neighbor, path, 'PATCH', patch, 403);
+    await request(neighbor, `/bookings/${joined._id}/cancel`, 'PATCH', {});
+    await runPoolLockSweep({ now: new Date(booking.poolId.lockCutoffTime) });
+    assert.equal((await ServicePool.findById(id)).status, 'forming');
+    await runPoolLockSweep({ now: edited });
+    assert.equal((await ServicePool.findById(id)).status, 'locked');
+    await request(owner, path, 'PATCH', patch, 409);
+  });
+
   await t.test('price watches fire once and closing limits settle cascading cancellations', async () => {
     const service = await ServiceCategory.create({ name: 'Window cleaning', slug: 'window-test', baseIndividualPrice: 600,
       estimatedDurationMins: 30, maxPoolSize: 3 });

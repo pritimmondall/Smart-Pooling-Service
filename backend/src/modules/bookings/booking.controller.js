@@ -1,3 +1,4 @@
+import { canEditPoolCutoff } from '../pools/poolOwnership.js';
 import { customerVisitRoute } from '../routing/customerRoute.service.js';
 import { PoolWatch } from '../../models/PoolWatch.js';
 import { buildingKey, getScope, scheduledWindow, serviceOptions } from '../pools/poolOptions.js';
@@ -231,7 +232,7 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
   const [service, technician, pool] = await Promise.all([
     ServiceCategory.findById(next.serviceCategoryId, 'name').lean(),
     next.technicianId && User.findById(next.technicianId, 'name').lean(),
-    next.poolId && ServicePool.findById(next.poolId, 'status poolScope sharedGeometry maxCapacity pricing lockCutoffTime aggregateTimeWindow members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
+    next.poolId && ServicePool.findById(next.poolId, 'status poolScope sharedGeometry maxCapacity pricing lockCutoffTime aggregateTimeWindow members.customerId members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
   ]);
   const stop = pool?.routeOrder?.find(item => String(item.bookingId) === String(next._id));
   const visitRoute = await customerVisitRoute(pool, next._id);
@@ -244,7 +245,7 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
     id: next._id, service: next.specificService || service?.name, status: next.status,
     price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
     window: pool?.aggregateTimeWindow || next.timeWindow,
-    pool: pool && { id: pool._id, nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
+    pool: pool && { id: pool._id, canEditCutoff: canEditPoolCutoff(pool, customerId), nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
   } });
 });
 

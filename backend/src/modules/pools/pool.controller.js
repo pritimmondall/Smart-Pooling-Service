@@ -1,3 +1,4 @@
+import { canEditPoolCutoff } from './poolOwnership.js';
 import mongoose from 'mongoose';
 import { ServicePool } from '../../models/index.js';
 import { AppError } from '../../utils/appError.js';
@@ -9,10 +10,10 @@ import {
   assignPoolToTechnician,
 } from './poolAssignment.service.js';
 
-function customerPool(pool) {
+function customerPool(pool, customerId) {
   const { _id, status, pricing, members, maxCapacity, poolRadiusKm, aggregateTimeWindow,
     lockCutoffTime, serviceCategoryId, zoneId, createdAt } = pool.toObject();
-  return { _id, status, pricing, members, maxCapacity, poolRadiusKm, aggregateTimeWindow,
+  return { canEditCutoff: canEditPoolCutoff(pool, customerId), _id, status, pricing, members, maxCapacity, poolRadiusKm, aggregateTimeWindow,
     lockCutoffTime, serviceCategoryId, zoneId, createdAt };
 }
 
@@ -67,7 +68,7 @@ export const getMyPools = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 });
 
   const sanitized = pools.map((pool) => {
-    const poolObj = customerPool(pool);
+    const poolObj = customerPool(pool, req.user._id);
     poolObj.members = poolObj.members
       .filter((m) => m.status === 'active')
       .map((m) => maskMemberForCustomer(m, req.user._id));
@@ -104,7 +105,7 @@ export const getPoolById = asyncHandler(async (req, res) => {
     throw new AppError(403, 'You do not have permission to view this service pool.', 'FORBIDDEN_POOL_ACCESS');
   }
 
-  const poolObj = isAdmin ? pool.toObject() : customerPool(pool);
+  const poolObj = isAdmin ? pool.toObject() : customerPool(pool, req.user._id);
 
   if (!isAdmin) {
     poolObj.members = poolObj.members
@@ -113,6 +114,33 @@ export const getPoolById = asyncHandler(async (req, res) => {
   }
 
   return sendSuccess(res, { data: poolObj });
+});
+
+export const updateLockCutoff = asyncHandler(async (req, res) => {
+  const value = req.body.lockCutoffTime;
+  const cutoff = new Date(typeof value === 'string' ? value : NaN);
+  if (!Number.isFinite(cutoff.getTime()) || cutoff <= new Date()) {
+    throw new AppError(400, 'Choose a cutoff in the future.', 'INVALID_CUTOFF');
+  }
+  const founder = {
+    _id: req.params.id, 'members.0.customerId': req.user._id,
+    members: { $elemMatch: { customerId: req.user._id, status: 'active' } },
+  };
+  const pool = await ServicePool.findOne(founder).select('status lockCutoffTime aggregateTimeWindow');
+  if (!pool) throw new AppError(403, 'Only the pool creator can edit the cutoff while a member.', 'FORBIDDEN_POOL_ACCESS');
+  if (pool.status !== 'forming' || pool.lockCutoffTime <= new Date()) {
+    throw new AppError(409, 'Joining has closed for this pool.', 'POOL_CLOSED');
+  }
+  if (cutoff > pool.aggregateTimeWindow.start) {
+    throw new AppError(400, 'Choose a cutoff at or before the service window starts.', 'INVALID_CUTOFF');
+  }
+  const updated = await ServicePool.findOneAndUpdate({
+    ...founder, status: 'forming', lockCutoffTime: { $eq: pool.lockCutoffTime, $gt: new Date() },
+    'aggregateTimeWindow.start': { $gte: cutoff },
+  }, { $set: { lockCutoffTime: cutoff, ownerLockCutoffTime: cutoff }, $inc: { version: 1 } },
+  { new: true }).select('lockCutoffTime');
+  if (!updated) throw new AppError(409, 'The pool changed. Refresh and try again.', 'POOL_CHANGED');
+  return sendSuccess(res, { data: { lockCutoffTime: updated.lockCutoffTime } });
 });
 
 /**

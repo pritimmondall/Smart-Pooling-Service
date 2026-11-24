@@ -18,6 +18,10 @@ import { poolScopes } from './poolOptions.js';
 const POOL_RADIUS_KM = 0.2;
 const EARTH_RADIUS_KM = 6371;
 
+function effectiveCutoff(ownerCutoff, start, leadTimeMs) {
+  return ownerCutoff ? new Date(Math.min(ownerCutoff.getTime(), start.getTime())) : new Date(start.getTime() - leadTimeMs);
+}
+
 /**
  * Computes geographic centroid ([longitude, latitude]) of an array of GeoJSON Points.
  */
@@ -313,6 +317,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
       {
         _id: candidate.pool._id,
         status: 'forming',
+        lockCutoffTime: { $gt: new Date() },
         $expr: {
           $lt: [
             {
@@ -373,7 +378,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     }
 
     const lockCutoffMs = (category.poolLockCutoffMins || 60) * 60 * 1000;
-    const newLockCutoff = new Date(aggregateStart.getTime() - lockCutoffMs);
+    const newLockCutoff = effectiveCutoff(joinedPool.ownerLockCutoffTime, aggregateStart, lockCutoffMs);
 
     if (injectFailureAt === 'during_pricing_recalc') {
       throw new Error('Simulated failure during_pricing_recalc');
@@ -656,7 +661,7 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
 
     const lockCutoffMs = ((category?.poolLockCutoffMins) || 60) * 60 * 1000;
     pool.aggregateTimeWindow = { start: aggregateStart, end: aggregateEnd };
-    pool.lockCutoffTime = new Date(aggregateStart.getTime() - lockCutoffMs);
+    pool.lockCutoffTime = effectiveCutoff(pool.ownerLockCutoffTime, aggregateStart, lockCutoffMs);
 
     // Recalculate pricing for remaining members
     const newPricing = calculatePoolPricing({

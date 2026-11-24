@@ -1,3 +1,4 @@
+import PoolCutoffEditor from '../components/common/PoolCutoffEditor.jsx';
 import CompletionFeedback from '../components/common/CompletionFeedback.jsx';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -424,6 +425,8 @@ export default function BookingDetailPage() {
             </div>
           </div>
 
+          {pool.canEditCutoff && <PoolCutoffEditor key={pool._id} poolId={pool._id} cutoff={pool.lockCutoffTime}
+            serviceStart={pool.aggregateTimeWindow.start} onSaved={lockCutoffTime => setPool(current => ({ ...current, lockCutoffTime }))}/>}
           {/* Capacity Progress Bar */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">

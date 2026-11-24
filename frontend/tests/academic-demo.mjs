@@ -109,6 +109,15 @@ test('three customers see a private visit sequence, follow the technician throug
     await page.goto(origin, { waitUntil: 'domcontentloaded' });
     if (!index) {
       await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 each') && document.body.innerText.includes('One more neighbour') && document.body.innerText.includes('₹550'));
+      await click(page, 'Edit lock cutoff');
+      await page.$eval('input[type=datetime-local]', input => {
+        const date = new Date(new Date(input.value).getTime() - 5 * 60000);
+        const value = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await click(page, 'Save cutoff');
+      await page.waitForFunction(() => document.body.innerText.includes('Joining deadline updated.'));
     }
   }
   await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 each'));

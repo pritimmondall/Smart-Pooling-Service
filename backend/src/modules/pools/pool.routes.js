@@ -1,7 +1,7 @@
 import { nearbyPools } from './discovery.controller.js';
 import { Router } from 'express';
 import {
-  getMyPools,
+  getMyPools, updateLockCutoff,
   getPoolById,
   triggerPoolLockEvaluation,
   getEligibleTechniciansForPoolHandler,
@@ -16,6 +16,7 @@ router.use(protect);
 
 router.get('/nearby', authorizeRoles('customer'), nearbyPools);
 router.get('/my', authorizeRoles('customer', 'admin'), getMyPools);
+router.patch('/:id/lock-cutoff', authorizeRoles('customer'), validateObjectIdParam('id'), requireBodyFields('lockCutoffTime'), updateLockCutoff);
 router.get('/:id', authorizeRoles('customer', 'admin'), validateObjectIdParam('id'), getPoolById);
 router.post('/lock-evaluation', authorizeRoles('admin'), triggerPoolLockEvaluation);
 

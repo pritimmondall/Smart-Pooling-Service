@@ -110,6 +110,7 @@ const servicePoolSchema = new mongoose.Schema(
         },
       },
     },
+    ownerLockCutoffTime: Date,
     lockCutoffTime: {
       type: Date,
       required: [true, 'lockCutoffTime is required.'],
