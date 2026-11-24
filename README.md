@@ -37,7 +37,7 @@ The pool finder can compare the preferred window with shifts of one or two hours
 
 Customers can set a maximum closing price before booking. SmartPool evaluates limits when a pool fills or reaches its deadline. If a cancellation raises the price, the remaining limits are checked again in the same transaction. A blank limit keeps the visit at the applicable rate.
 
-A price watch sends one in-app notification when an automatic pool matches the selected service, location, window and budget. The pool worker checks watches during dispatch sweeps. Customers can remove pending watches. Reviewing the invitation checks availability again. During an accepted pool visit, the dashboard displays the number of unfinished stops before the customer's turn.
+A price watch sends one in-app notification when an automatic pool matches the selected service, location, window and budget. The pool worker checks watches during dispatch sweeps. Customers can remove pending watches. Reviewing the invitation checks availability again. After the technician accepts, each member’s dashboard displays the saved visit order on a collapsible map, highlights their home and shows the remaining stops ahead. Other homes appear at approximate neighbourhood grid centres. Road overviews connect these areas when available. Simulated routes, single-area pools and routing failures use a labelled schematic.
 
 ## Pricing and routes
 
@@ -51,7 +51,7 @@ The technician earnings view sums each completed customer's discounted service p
 
 ## Verification
 
-Run `npm run demo:verify` with Chrome installed to build the frontend and exercise the academic demo in three separate browser sessions. The test starts its own temporary MongoDB replica set, uses a two-member AC service and simulated routing, and checks the booking, shared price, technician stops, completion confirmations and ratings. Set `CHROME_PATH` for a custom Chrome installation.
+Run `npm run demo:verify` with Chrome installed to build the frontend and exercise the academic demo in four separate browser sessions. The test starts its own temporary MongoDB replica set, uses a three-member AC pool and simulated routing, and checks booking, shared prices, the private map for each customer, stop progression, completion confirmations and ratings. Set `CHROME_PATH` for a custom Chrome installation.
 
 Run `npm test` for the backend and frontend suites and `npm run build` for the production bundle. MongoDB-backed tests require local ports and a MongoDB binary. Set `MONGOMS_SYSTEM_BINARY` to an installed binary for offline runs. The standalone Atlas and historical pooling verification scripts use the configured database and should target an isolated test dataset.
 

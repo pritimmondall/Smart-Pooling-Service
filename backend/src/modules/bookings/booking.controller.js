@@ -1,3 +1,4 @@
+import { customerVisitRoute } from '../routing/customerRoute.service.js';
 import { PoolWatch } from '../../models/PoolWatch.js';
 import { buildingKey, getScope, scheduledWindow, serviceOptions } from '../pools/poolOptions.js';
 import mongoose from 'mongoose';
@@ -230,27 +231,16 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
   const [service, technician, pool] = await Promise.all([
     ServiceCategory.findById(next.serviceCategoryId, 'name').lean(),
     next.technicianId && User.findById(next.technicianId, 'name').lean(),
-    next.poolId && ServicePool.findById(next.poolId, 'status maxCapacity pricing lockCutoffTime aggregateTimeWindow members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
+    next.poolId && ServicePool.findById(next.poolId, 'status poolScope sharedGeometry maxCapacity pricing lockCutoffTime aggregateTimeWindow members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
   ]);
   const stop = pool?.routeOrder?.find(item => String(item.bookingId) === String(next._id));
-  let visitsAhead = null;
-  if (pool && ['accepted', 'in_progress'].includes(pool.status) && ['accepted', 'assigned'].includes(next.status)) {
-    const active = pool.members.filter(member => member.status === 'active');
-    const bookings = await Booking.find({ _id: { $in: active.map(member => member.bookingId) } }, 'status stopSequence').lean();
-    const byId = new Map(bookings.map(item => [String(item._id), item]));
-    const planned = new Map(pool.routeOrder.map(item => [String(item.bookingId), item.sequenceIndex]));
-    const remaining = pool.members.map((member, index) => {
-      const id = String(member.bookingId);
-      const booking = member.status === 'active' ? byId.get(id) : null;
-      return { id, status: booking?.status, order: planned.get(id) ?? (booking?.stopSequence || index + 1) };
-    }).filter(item => item.status && !['completed', 'cancelled'].includes(item.status)).sort((a, b) => a.order - b.order);
-    const position = remaining.findIndex(item => item.id === String(next._id));
-    if (position >= 0) visitsAhead = position;
-  }
+  const visitRoute = await customerVisitRoute(pool, next._id);
+  const position = visitRoute?.stops.filter(item => !['completed', 'cancelled'].includes(item.status)).findIndex(item => item.yours);
+  const visitsAhead = position >= 0 && ['accepted', 'assigned'].includes(next.status) ? position : null;
   const nextPrice = pool?.status === 'forming' && pool.pricing.memberCount < pool.maxCapacity
     ? calculatePoolPricing({ basePrice: pool.pricing.individualBasePrice, memberCount: pool.pricing.memberCount + 1 }).finalPricePerMember : null;
   return sendSuccess(res, { data: {
-    visitsAhead, closingPriceLimit: next.closingPriceLimit, serviceCategoryId: next.serviceCategoryId,
+    visitRoute, visitsAhead, closingPriceLimit: next.closingPriceLimit, serviceCategoryId: next.serviceCategoryId,
     id: next._id, service: next.specificService || service?.name, status: next.status,
     price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
     window: pool?.aggregateTimeWindow || next.timeWindow,

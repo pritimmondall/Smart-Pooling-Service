@@ -12,21 +12,21 @@ import { User, ServiceCategory, TechnicianProfile } from '../../backend/src/mode
 const requireBackend = createRequire(new URL('../../backend/package.json', import.meta.url));
 const { MongoMemoryReplSet } = requireBackend('mongodb-memory-server');
 
-test('two customers share a quoted pool, the technician completes both stops, and both customers rate', async t => {
+test('three customers see a private visit sequence, follow the technician through three stops, and rate their visits', async t => {
   env.routingProvider = 'mock';
   const db = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   t.after(async () => { await disconnectDB(); await db.stop(); });
   await connectDB(db.getUri());
   const service = await ServiceCategory.create({ name: 'AC service', slug: 'ac-service',
-    baseIndividualPrice: 600, estimatedDurationMins: 30, maxPoolSize: 2 });
+    baseIndividualPrice: 600, estimatedDurationMins: 15, maxPoolSize: 3 });
   const password = 'LocalDemo123!';
-  const accounts = await User.create(['First', 'Second', 'Technician'].map((name, i) => ({
+  const accounts = await User.create(['First', 'Second', 'Third', 'Technician'].map((name, i) => ({
     name, email: name.toLowerCase() + '@demo.example', passwordHash: password,
-    role: i === 2 ? 'technician' : 'customer',
-    poolAlertLocation: { type: 'Point', coordinates: [88.36, 22.52 + i * 0.0003] },
+    role: i === 3 ? 'technician' : 'customer',
+    poolAlertLocation: { type: 'Point', coordinates: [88.36, 22.5198 + i * 0.0007] },
   })));
-  await TechnicianProfile.create({ userId: accounts[2]._id, serviceCategories: [service._id],
-    approvalStatus: 'approved', availabilityStatus: 'available', baseLocation: accounts[2].poolAlertLocation });
+  await TechnicianProfile.create({ userId: accounts[3]._id, serviceCategories: [service._id],
+    approvalStatus: 'approved', availabilityStatus: 'available', baseLocation: accounts[3].poolAlertLocation });
   const server = createApp().listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -54,7 +54,7 @@ test('two customers share a quoted pool, the technician completes both stops, an
 
   const customers = [];
   let firstWindow;
-  for (const [index, account] of accounts.slice(0, 2).entries()) {
+  for (const [index, account] of accounts.slice(0, 3).entries()) {
     const page = await login(account);
     customers.push(page);
     const value = service.id + '/AC service';
@@ -69,9 +69,9 @@ test('two customers share a quoted pool, the technician completes both stops, an
         && [...document.querySelectorAll('select')].some(el => el.value === 'AC service'));
       await individual.close();
     } else {
-      await page.waitForFunction(() => document.body.innerText.includes('₹540 if you join'));
+      await page.waitForFunction(price => document.body.innerText.includes(price + ' if you join'), {}, index === 1 ? '₹540' : '₹510');
     }
-    if (index) {
+    if (index === 1) {
       await page.$$eval('input[type=datetime-local]', (inputs, firstStart) => {
         const end = new Date(firstStart);
         const start = new Date(+end - 3600000);
@@ -84,12 +84,12 @@ test('two customers share a quoted pool, the technician completes both stops, an
       await page.click('input[type=checkbox]');
     }
     await click(page, 'Find my best pool');
-    if (index) {
+    if (index === 1) {
       await page.waitForFunction(() => document.body.innerText.includes('1h later'));
       await page.click('input[name=visit-window]:not(:checked)');
     }
-    await page.waitForFunction(price => document.body.innerText.includes(price + ' each after booking'), {}, index ? '₹540' : '₹600');
-    if (index) {
+    await page.waitForFunction(price => document.body.innerText.includes(price + ' each after booking'), {}, ['₹600', '₹540', '₹510'][index]);
+    if (index === 1) {
       await page.waitForFunction(() => document.body.innerText.includes('Save ₹60 (10%)'));
       await page.click('summary::-p-text(Watch for a price)');
       await page.type('details input[type=number]', '540');
@@ -106,23 +106,56 @@ test('two customers share a quoted pool, the technician completes both stops, an
     if (!index) await page.type('input[placeholder="No limit · keep my visit"]', '550');
     await click(page, index ? 'Confirm pooled booking' : 'Start a pool');
     await page.waitForFunction(() => location.pathname.startsWith('/bookings/'));
+    await page.goto(origin, { waitUntil: 'domcontentloaded' });
     if (!index) {
-      await page.goto(origin, { waitUntil: 'domcontentloaded' });
       await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 each') && document.body.innerText.includes('One more neighbour') && document.body.innerText.includes('₹550'));
     }
   }
-  await customers[0].waitForFunction(() => document.body.innerText.includes('2 members · ₹540 each'));
-  const tech = await login(accounts[2]);
+  await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 each'));
+  const tech = await login(accounts[3]);
   await click(tech, 'Claim job');
+  for (const page of customers) {
+    assert.equal(await page.$('[aria-label="Visit route"]'), null);
+  }
   await click(tech, 'Accept');
   await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · Technician') && document.body.innerText.includes('Estimated visit ·') && /visit before yours|Your visit is next/.test(document.body.innerText));
-  for (let stop = 0; stop < 2; stop++) {
+  const byVisit = new Map();
+  for (const [index, page] of customers.entries()) {
+    await page.waitForSelector('.customer-visit-map.leaflet-container');
+    await page.waitForSelector('.visit-pin');
+    assert.equal(await page.$$eval('.visit-route li', items => items.length), 3);
+    const route = await page.evaluate(async () => {
+      const result = await fetch('/api/v1/bookings/dashboard', {
+        headers: { Authorization: 'Bearer ' + localStorage.getItem('smartpool_token') },
+      });
+      return (await result.json()).data.visitRoute;
+    });
+    assert.deepEqual(route.stops.map(stop => stop.number), [1, 2, 3]);
+    assert.equal(route.stops.filter(stop => stop.yours).length, 1);
+    const own = route.stops.find(stop => stop.yours);
+    assert.deepEqual(own.point, Array.from(accounts[index].poolAlertLocation.coordinates));
+    for (const other of route.stops.filter(stop => !stop.yours)) {
+      assert.deepEqual(Object.keys(other).sort(), ['number', 'point', 'status', 'yours']);
+      assert.ok(accounts.every(account => JSON.stringify(other.point) !== JSON.stringify(account.poolAlertLocation.coordinates)));
+    }
+    byVisit.set(own.number, page);
+    await click(page, 'Hide map');
+    assert.equal(await page.$('.customer-visit-map'), null);
+    assert.equal(await page.$$eval('.visit-route li', items => items.length), 3);
+    await click(page, 'Show map');
+  }
+  assert.equal(byVisit.size, 3);
+  for (let stop = 0; stop < 3; stop++) {
     for (const [label, action] of [['Mark Arrived', 'arrive'], ['Start Service', 'start'], ['Complete Service', 'complete']]) {
       const [response] = await Promise.all([
         tech.waitForResponse(res => res.url().includes('/stops/') && res.url().endsWith('/' + action)),
         click(tech, label),
       ]);
       assert.equal(response.status(), 200);
+    }
+    if (stop === 0) {
+      await byVisit.get(2).waitForFunction(() => document.body.innerText.includes('Your visit is next')
+        && document.querySelector('.visit-route li')?.textContent.includes('Completed'));
     }
   }
   for (const page of customers) {

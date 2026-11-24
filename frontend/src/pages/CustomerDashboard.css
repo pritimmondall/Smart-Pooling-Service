@@ -88,3 +88,20 @@
   .map-centre { width: 2rem; height: 2rem; left: 70%; }
   .map-centre svg { width: 16px; }
 }
+
+.visit-route { padding: 1rem; margin-block: 1rem; background: white; border: 1px solid var(--line); border-radius: 1rem; }
+.visit-route header, .visit-route li { display: flex; align-items: center; gap: .65rem; }
+.visit-route header { justify-content: space-between; }
+.visit-route h3 { font-size: 1.1rem; font-weight: 700; }
+.visit-route button { color: #245c42; text-decoration: underline; padding: .3rem; }
+.visit-route small { display: block; margin-block: .5rem; color: #53685f; }
+.customer-visit-map { height: clamp(190px, 30vw, 290px); margin-top: .85rem; border-radius: .7rem; background: #e8eee6; }
+.visit-pin { background: #254e43; border: 2px solid white; border-radius: 18px; text-align: center; line-height: 26px; font-weight: 700; color: white; }
+.visit-done { background: #65736a; }
+.visit-own { background: #bfe389; color: #193a29; outline: 2px solid #285137; }
+.visit-route li { padding: .5rem; border-top: 1px solid #e3ebe3; font-size: .84rem; }
+.visit-route li b { min-width: 1.5rem; text-align: center; }
+.visit-route li span:last-child { margin-left: auto; text-align: right; }
+.visit-self { background: #f0f7e7; font-weight: 650; }
+
+.visit-pin.visit-underway { background: #8b4d13; color: white; }

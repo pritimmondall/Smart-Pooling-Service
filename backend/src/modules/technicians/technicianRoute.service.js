@@ -1,3 +1,4 @@
+import { planSharedGeometry } from '../routing/customerRoute.service.js';
 import mongoose from 'mongoose';
 import { TechnicianProfile, ServicePool, Booking } from '../../models/index.js';
 import { AppError } from '../../utils/appError.js';
@@ -327,7 +328,11 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
           (a, b) => a.sequenceIndex - b.sequenceIndex
         );
 
-        await ServicePool.findByIdAndUpdate(pool._id, { $set: { routeOrder: mergedRouteOrder } });
+        const locations = new Map(pool.members.filter(m => m.status === 'active' && m.bookingId)
+          .map(m => [String(m.bookingId._id), (m.bookingId.location || m.location)?.coordinates]));
+        const points = mergedRouteOrder.map(s => locations.get(String(s.bookingId))).filter(Boolean);
+        const sharedGeometry = await planSharedGeometry(points, optimized.provider, pool.sharedGeometry);
+        await ServicePool.findByIdAndUpdate(pool._id, { $set: { routeOrder: mergedRouteOrder, sharedGeometry } });
 
         for (const stop of optimized.stops) {
           if (stop.bookingId) {

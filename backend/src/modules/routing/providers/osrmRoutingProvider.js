@@ -124,6 +124,19 @@ export class OsrmRoutingProvider extends BaseRoutingProvider {
   /**
    * Retrieves driving route between origin and destination.
    */
+  async getOverview(points) {
+    const path = points.map(point => point.join(',')).join(';');
+    const response = await fetch(`${this.baseUrl}/route/v1/driving/${path}?geometries=geojson&overview=simplified&steps=false`, {
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!response.ok) throw new Error('Road overview unavailable.');
+    const data = await response.json();
+    const line = data.routes?.[0]?.geometry?.coordinates;
+    if (data.code !== 'Ok' || !Array.isArray(line) || line.length < 2 ||
+        !line.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite))) return [];
+    return line;
+  }
+
   async getRoute(origin, destination) {
     const matrix = await this.getDistanceMatrix([origin, destination]);
     return {

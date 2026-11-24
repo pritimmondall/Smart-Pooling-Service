@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { bookingsApi } from '../../api/client.js';
 import { STATUS_LABELS } from '../../utils/bookingTimeline.js';
+
+const CustomerVisitRoute = lazy(() => import('./CustomerVisitRoute.jsx'));
 
 const nextAction = {
   pending: 'You can review or cancel your request in booking details.',
@@ -62,6 +64,9 @@ export default function DashboardBooking() {
         {booking.visitsAhead != null && <p aria-live="polite">{booking.visitsAhead === 0 ? 'Your visit is next' : `${booking.visitsAhead} ${booking.visitsAhead === 1 ? 'visit' : 'visits'} before yours`}</p>}
         {booking.estimatedStart && <p>Estimated visit · {when(booking.estimatedStart)}</p>}
       </>}
+      {booking.visitRoute && <Suspense fallback={<p>Loading visit route…</p>}>
+        <CustomerVisitRoute key={booking.id} route={booking.visitRoute}/>
+      </Suspense>}
       {!forming && !completed && <p className="text-sm">{nextAction[booking.status]}</p>}
       <Link className="text-emerald-700 underline" to={'/bookings/' + booking.id}>{completed ? 'Confirm completion and rate' : 'View booking'}</Link>
     </>}

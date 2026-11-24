@@ -238,6 +238,7 @@ const servicePoolSchema = new mongoose.Schema(
         message: 'rejectedTechnicians cannot contain duplicate technician IDs.',
       },
     },
+    sharedGeometry: { key: String, line: { type: [[Number]], default: undefined } },
     routeOrder: [
       {
         bookingId: {

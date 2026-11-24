@@ -269,6 +269,7 @@ export const acceptAssignedJob = asyncHandler(async (req, res) => {
           && plan.stops.every(s => pool.members.some(m => m.status === 'active' && String(m.bookingId) === String(s.bookingId)));
         if (planned) {
           pool.routeOrder = plan.routeOrder;
+          pool.sharedGeometry = plan.sharedGeometry;
           for (const stop of plan.stops) {
             await Booking.updateOne({ _id: stop.bookingId }, { $set: {
               stopSequence: stop.sequenceIndex,

@@ -1,3 +1,4 @@
+import { planSharedGeometry } from '../routing/customerRoute.service.js';
 import { ServicePool } from '../../models/index.js';
 import { env } from '../../config/env.js';
 import { optimizePoolRoute } from '../routing/routeOptimization.service.js';
@@ -39,8 +40,10 @@ export async function planAssignedPool(id, profile) {
   });
   if (!route.roadDistanceCalculated) return null;
   const savedMeters = Math.max(0, route.separateDispatchMeters - route.totalTravelDistance.meters);
+  const locations = new Map(members.map(m => [String(m.bookingId._id), m.bookingId.location.coordinates]));
+  const sharedGeometry = await planSharedGeometry(route.stops.map(s => locations.get(String(s.bookingId))), route.provider, pool.sharedGeometry);
   return {
-    provider: route.provider, savedMeters, costPerKm: env.travelCostPerKm,
+    sharedGeometry, provider: route.provider, savedMeters, costPerKm: env.travelCostPerKm,
     routeOrder: route.stops.map(({ bookingId, sequenceIndex, estimatedArrival, estimatedServiceStart, estimatedServiceEnd }) =>
       ({ bookingId, sequenceIndex, estimatedArrival, estimatedServiceStart, estimatedServiceEnd })),
     stops: allocateSavings(savedMeters, env.travelCostPerKm, route.stops),
