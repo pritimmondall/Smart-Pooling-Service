@@ -8,15 +8,13 @@ import {
   Calendar,
   Phone,
   User,
-  ArrowRight,
+  CheckSquare,
   RefreshCw,
   Navigation,
-  ShieldCheck,
   AlertTriangle,
   XCircle,
   Play,
-  CheckSquare,
-  Ban,
+  Wallet,
   Car,
   Layers,
   ChevronRight,
@@ -24,6 +22,8 @@ import {
   ChevronUp,
   Info,
 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import './TechnicianDashboard.css';
 import { useAuth } from '../context/AuthContext.jsx';
 import { techniciansApi } from '../api/client.js';
 import TechnicianDay, { VisitException } from '../components/common/TechnicianDay.jsx';
@@ -38,6 +38,7 @@ export { formatRouteMetric };
 
 export default function TechnicianDashboard() {
   const { user } = useAuth();
+  const { pathname } = useLocation();
 
   // State
   const [earnings, setEarnings] = useState(null);
@@ -404,17 +405,22 @@ export default function TechnicianDashboard() {
   const activeCount = pending + inProgress + (counts.accepted || 0);
   const maxCapacity = profile?.maxPoolCapacity || 4;
   const currentWorkload = profile?.activeWorkload !== undefined ? profile.activeWorkload : activeCount;
-  const isBusy = profile?.availabilityStatus === 'busy' || inProgress > 0 || currentWorkload >= maxCapacity;
+  const availableBlocked = profile?.approvalStatus !== 'approved' || inProgress > 0 || currentWorkload >= maxCapacity;
+  const fare = paise => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2,
+    minimumFractionDigits: 0 }).format(paise / 100);
+  useEffect(() => {
+    if (!loading && pathname === '/technician/jobs') document.getElementById('assigned-work')?.scrollIntoView();
+  }, [pathname, loading]);
 
   if (loading) {
     return <LoadingSpinner label="Loading technician dashboard..." size="lg" className="py-24" />;
   }
 
   return (
-    <div className="space-y-8">
+    <div className="tech-desk">
       {/* Top Feedback Banner */}
       {actionSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-medium flex items-center justify-between shadow-sm animate-fade-in">
+        <div role="status" className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-medium flex items-center justify-between shadow-sm animate-fade-in">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
             <span>{actionSuccess}</span>
@@ -431,7 +437,7 @@ export default function TechnicianDashboard() {
 
       {/* Top Error Banner */}
       {error && (
-        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm font-medium flex items-center justify-between shadow-sm animate-fade-in">
+        <div role="alert" className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs sm:text-sm font-medium flex items-center justify-between shadow-sm animate-fade-in">
           <div className="flex items-center gap-2.5">
             <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
             <span>{error}</span>
@@ -446,322 +452,57 @@ export default function TechnicianDashboard() {
         </div>
       )}
 
-      {/* 1. Header & Profile Summary Card */}
-      <div className="glass-panel bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-200 border border-indigo-400/30">
-                <Wrench className="w-3.5 h-3.5" />
-                Technician Field Portal
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                  profile?.approvalStatus === 'approved'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
-                    : 'bg-amber-500/20 text-amber-300 border border-amber-400/30'
-                }`}
-              >
-                <ShieldCheck className="w-3 h-3" />
-                {profile?.approvalStatus || 'pending'}
-              </span>
-            </div>
-
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-              Welcome, {user?.name || 'Technician'}
-            </h1>
-            <p className="text-xs sm:text-sm text-indigo-200/80 max-w-2xl leading-relaxed">
-              Manage your availability, view assigned pooled and individual jobs, inspect optimized road routes, and update job progress in real time.
-            </p>
-
-            {/* Profile Meta Details */}
-            <div className="flex flex-wrap items-center gap-4 pt-2 text-xs text-indigo-200/70">
-              {profile?.zoneId?.name && (
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-indigo-300" />
-                  <span>Zone: {profile.zoneId.name}</span>
-                </div>
-              )}
-              {profile?.serviceRadiusKm && (
-                <div className="flex items-center gap-1.5">
-                  <Navigation className="w-3.5 h-3.5 text-indigo-300" />
-                  <span>Radius: {profile.serviceRadiusKm} km</span>
-                </div>
-              )}
-              {profile?.workingHours && (
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-indigo-300" />
-                  <span>
-                    Hours: {profile.workingHours.start} - {profile.workingHours.end}
-                  </span>
-                </div>
-              )}
-              {user?.phone && (
-                <div className="flex items-center gap-1.5">
-                  <Phone className="w-3.5 h-3.5 text-indigo-300" />
-                  <span>{user.phone}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Service Category Badges */}
-            {profile?.serviceCategories && profile.serviceCategories.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 pt-2">
-                <span className="text-[11px] text-indigo-300/80 mr-1">Skills:</span>
-                {profile.serviceCategories.map((cat) => (
-                  <span
-                    key={cat._id || cat.slug}
-                    className="px-2 py-0.5 rounded-lg bg-indigo-800/60 border border-indigo-700/50 text-[11px] font-medium text-indigo-100"
-                  >
-                    {cat.name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Quick Refresh Button */}
-          <div className="shrink-0 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => fetchData(true)}
-              disabled={refreshing}
-              className="glass-button-secondary bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs px-3.5 py-2.5 flex items-center gap-2 rounded-xl"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
-          </div>
+      <header className="desk-heading">
+        <div><p className="desk-date"><Calendar size={15}/><time>{new Date().toLocaleDateString('en-IN', {
+          weekday: 'long', day: 'numeric', month: 'long'
+        })}</time></p>
+          <h1>Field dashboard</h1>
+          <p className="desk-identity">{[user?.name, profile?.zoneId?.name, profile?.serviceCategories?.map(c => c.name).join(', ')].filter(Boolean).join(' · ')}</p>
         </div>
+        <div className="desk-controls">
+          <label className="desk-status"><span className={'desk-dot ' + (profile?.availabilityStatus || '')}/>
+            <select aria-label="Work availability" value={profile?.availabilityStatus || ''} disabled={updatingAvailability || !profile}
+              onChange={e => handleUpdateAvailability(e.target.value)}>
+              {!profile?.availabilityStatus && <option value="">Status unavailable</option>}
+              {profile?.availabilityStatus === 'busy' && <option value="busy">Busy</option>}
+              <option value="available" disabled={availableBlocked}>Available</option>
+              <option value="unavailable">Unavailable</option><option value="offline">Offline</option>
+            </select>
+          </label>
+          <button className="desk-refresh" aria-label="Refresh dashboard" title="Refresh dashboard" disabled={refreshing} onClick={() => fetchData(true)}>
+            <RefreshCw size={17} className={refreshing ? 'animate-spin' : undefined}/>
+          </button>
+        </div>
+      </header>
+
+      <div className="desk-metrics">
+        <div><span><Layers/>Active jobs</span><strong>{currentWorkload}<small> / {maxCapacity}</small></strong>
+          <meter aria-label="Workload capacity" min="0" max={maxCapacity} value={currentWorkload}/></div>
+        <a href="#assigned-work" onClick={() => { setStatusFilter('assigned'); setTypeFilter('all'); setSearchQuery(''); setJobPage(1); }}>
+          <span><Clock/>Awaiting acceptance</span><strong>{pending}</strong><small>Assigned jobs <ChevronRight size={12}/></small></a>
+        <div><span><CheckCircle2/>Completed jobs</span><strong>{profile?.jobsCompleted || counts.completed || 0}</strong><small>{inProgress} in progress</small></div>
+        <a href="#field-earnings"><span><Wallet/>Today’s earnings</span><strong>{earnings ? fare(earnings.todayPaise) : '—'}</strong><small>Completed fares <ChevronRight size={12}/></small></a>
       </div>
 
       <TechnicianDay routes={routes} processing={processingStops} onArrive={handleArriveStop} onStart={handleStartStop}
-        onComplete={handleCompleteStop} openIncident={openIncident}/>
+        onComplete={handleCompleteStop} openIncident={openIncident} pending={pending}/>
       {incident && <VisitException incident={incident} onClose={() => setIncident(null)} onRefresh={fetchData} onFeedback={showFeedback}/>}
-      <TechnicianOpportunities opportunities={opportunities} profile={profile} onRefresh={fetchData}/>
-      {earnings && <section className="glass-panel rounded-3xl p-6">
-        <h2 className="text-lg font-bold">Estimated earnings</h2>
-        <p className="text-2xl font-bold">₹{(earnings.totalPaise / 100).toFixed(2)}</p>
-        <p>Today · ₹{(earnings.todayPaise / 100).toFixed(2)}</p>
-        <p className="text-sm text-slate-600">{earnings.completedServices} completed services · ₹{(earnings.servicePaise / 100).toFixed(2)} in completed customer fares</p>
-      </section>}
 
-      {/* 2. Availability Controls & Live Status Card */}
-      <div className="glass-panel bg-white/90 rounded-3xl p-6 border border-slate-200/80 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          {/* Current Status Pill */}
-          <div className="space-y-1">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Current Live Status
-            </div>
-            <div className="flex items-center gap-3">
-              <span
-                className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold border shadow-xs ${
-                  profile?.availabilityStatus === 'available'
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300/80'
-                    : profile?.availabilityStatus === 'busy'
-                    ? 'bg-amber-50 text-amber-800 border-amber-300/80'
-                    : profile?.availabilityStatus === 'unavailable'
-                    ? 'bg-rose-50 text-rose-800 border-rose-300/80'
-                    : 'bg-slate-100 text-slate-800 border-slate-300/80'
-                }`}
-              >
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    profile?.availabilityStatus === 'available'
-                      ? 'bg-emerald-500 animate-pulse'
-                      : profile?.availabilityStatus === 'busy'
-                      ? 'bg-amber-500'
-                      : profile?.availabilityStatus === 'unavailable'
-                      ? 'bg-rose-500'
-                      : 'bg-slate-500'
-                  }`}
-                />
-                {profile?.availabilityStatus ? profile.availabilityStatus.toUpperCase() : 'UNKNOWN'}
-              </span>
-
-              {isBusy && profile?.availabilityStatus !== 'busy' && (
-                <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200/60 font-medium">
-                  Active job in progress or capacity reached
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-slate-400 mt-1">
-              {profile?.availabilityStatus === 'available' &&
-                'You are currently active and eligible to receive new service pool or booking assignments.'}
-              {profile?.availabilityStatus === 'busy' &&
-                'You are currently busy on an active job or have reached your maximum concurrent capacity.'}
-              {profile?.availabilityStatus === 'unavailable' &&
-                'You are marked unavailable. You will not receive new assignments until marked available.'}
-              {profile?.availabilityStatus === 'offline' &&
-                'You are currently offline. Go available to resume receiving work.'}
-            </p>
-          </div>
-
-          {/* Interactive Availability Controls */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500 mr-2">Change Status:</span>
-
-            <button
-              type="button"
-              onClick={() => handleUpdateAvailability('available')}
-              disabled={
-                updatingAvailability ||
-                profile?.availabilityStatus === 'available' ||
-                profile?.approvalStatus !== 'approved' ||
-                inProgress > 0 ||
-                currentWorkload >= maxCapacity
-              }
-              title={
-                profile?.approvalStatus !== 'approved'
-                  ? 'Account must be approved by admin'
-                  : inProgress > 0
-                  ? 'Cannot set available while a job is in progress'
-                  : currentWorkload >= maxCapacity
-                  ? 'Capacity limit reached'
-                  : 'Set availability to Available'
-              }
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                profile?.availabilityStatus === 'available'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Available
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleUpdateAvailability('unavailable')}
-              disabled={updatingAvailability || profile?.availabilityStatus === 'unavailable'}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                profile?.availabilityStatus === 'unavailable'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-            >
-              <Ban className="w-3.5 h-3.5" />
-              Unavailable
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleUpdateAvailability('offline')}
-              disabled={updatingAvailability || profile?.availabilityStatus === 'offline'}
-              className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                profile?.availabilityStatus === 'offline'
-                  ? 'bg-slate-700 text-white shadow-sm'
-                  : 'bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              Offline
-            </button>
-          </div>
-        </div>
+      <div className="desk-market">
+        <TechnicianOpportunities opportunities={opportunities} profile={profile} onRefresh={fetchData}/>
+        <aside className="desk-ledger" id="field-earnings">
+          <Wallet size={21}/><h2>Estimated earnings</h2>
+          <strong>{earnings ? fare(earnings.totalPaise) : '—'}</strong><p>Lifetime total</p>
+          <dl><div><dt>Today</dt><dd>{earnings ? fare(earnings.todayPaise) : '—'}</dd></div>
+            <div><dt>Completed services</dt><dd>{earnings?.completedServices ?? '—'}</dd></div></dl>
+        </aside>
       </div>
 
-      {/* 3. Metrics Overview Banner */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Active Workload & Capacity */}
-        <div className="glass-panel bg-white/80 rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Workload Capacity</span>
-            <Layers className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">
-            {currentWorkload} <span className="text-sm font-normal text-slate-400">/ {maxCapacity}</span>
-          </div>
-          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-3">
-            <div
-              className={`h-full transition-all duration-300 ${
-                currentWorkload >= maxCapacity
-                  ? 'bg-rose-500'
-                  : currentWorkload > 0
-                  ? 'bg-indigo-600'
-                  : 'bg-emerald-500'
-              }`}
-              style={{ width: `${Math.min(100, (currentWorkload / maxCapacity) * 100)}%` }}
-            />
-          </div>
-          <p className="text-[11px] text-slate-400 mt-2">
-            {maxCapacity - currentWorkload > 0
-              ? `${maxCapacity - currentWorkload} workload slot(s) available`
-              : 'Maximum concurrent capacity reached'}
-          </p>
-        </div>
-
-        {/* Metric 2: Completed Jobs */}
-        <div className="glass-panel bg-white/80 rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Completed Jobs</span>
-            <CheckSquare className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">
-            {profile?.jobsCompleted || counts.completed || 0}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3">
-            Successfully serviced & verified jobs
-          </p>
-        </div>
-
-        {/* Metric 3: Pending Assignment Approvals */}
-        <div className="glass-panel bg-white/80 rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Pending Confirmation</span>
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-bold text-amber-600">
-            {pending}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3">
-            {pending > 0
-              ? 'Requires your acceptance or rejection'
-              : 'All assignments processed'}
-          </p>
-        </div>
-
-        {/* Metric 4: In Progress Work */}
-        <div className="glass-panel bg-white/80 rounded-2xl p-5 border border-slate-200/80 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">In Progress</span>
-            <Clock className="w-4 h-4 text-teal-600" />
-          </div>
-          <div className="text-2xl font-bold text-slate-900">
-            {inProgress}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-3">
-            Currently active field executions
-          </p>
-        </div>
-      </div>
-
-      {/* 4. Assigned Jobs Section */}
-      <div className="space-y-4">
-        {/* Section Header & Filters */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-slate-200/80">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-              <Wrench className="w-5 h-5 text-indigo-600" />
-              Assigned Field Jobs
-            </h2>
-            <p className="text-xs text-slate-500">
-              Review and manage pooled clusters and individual service assignments.
-            </p>
-          </div>
-
-          {/* Search bar */}
-          <div className="w-full md:w-72">
-            <input
-              type="text"
-              placeholder="Search by customer, category, address..."
-              value={searchQuery}
-              onChange={(e) => { setJobPage(1); setSearchQuery(e.target.value); }}
-              className="glass-input w-full text-xs py-2 px-3"
-            />
-          </div>
+      <section className="desk-jobs space-y-4" id="assigned-work">
+        <div className="desk-section-title">
+          <h2>Assigned jobs</h2>
+          <input type="search" aria-label="Search assigned jobs" placeholder="Search jobs, customers, addresses" value={searchQuery}
+            onChange={e => { setJobPage(1); setSearchQuery(e.target.value); }} className="glass-input"/>
         </div>
 
         {/* Filter Tabs */}
@@ -779,6 +520,7 @@ export default function TechnicianDashboard() {
             ].map((tab) => (
               <button
                 key={tab.id}
+                aria-pressed={statusFilter === tab.id}
                 type="button"
                 onClick={() => { setJobPage(1); setStatusFilter(tab.id); }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
@@ -803,6 +545,7 @@ export default function TechnicianDashboard() {
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <span>Type:</span>
             <select
+              aria-label="Job type"
               value={typeFilter}
               onChange={(e) => { setJobPage(1); setTypeFilter(e.target.value); }}
               className="glass-input text-xs py-1 px-2.5 rounded-lg bg-white"
@@ -822,8 +565,8 @@ export default function TechnicianDashboard() {
         </nav>}
         {filteredJobs.length === 0 ? (
           <EmptyState
-            title="No Assigned Jobs Found"
-            message={
+            title="No assigned jobs"
+            description={
               searchQuery || statusFilter !== 'all' || typeFilter !== 'all'
                 ? 'No assigned jobs match your active filter criteria.'
                 : 'You do not have any assigned jobs at this moment. Stay available to receive upcoming bookings.'
@@ -1353,7 +1096,7 @@ export default function TechnicianDashboard() {
             })}
           </div>
         )}
-      </div>
+      </section>
 
       {/* 5. Route & Stop Sequence Modal */}
       <Modal

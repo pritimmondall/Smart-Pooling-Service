@@ -42,7 +42,7 @@ export default function Navbar({ onToggleSidebar }) {
               <span
                 className={`hidden sm:inline-block ml-2 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
                   user?.role === 'technician'
-                    ? 'text-indigo-700 bg-indigo-50 border-indigo-200/60'
+                    ? 'text-[#275c47] bg-[#eef3ef] border-[#d4dfd8]'
                     : 'text-emerald-700 bg-emerald-50 border-emerald-200/60'
                 }`}
               >

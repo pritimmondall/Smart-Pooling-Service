@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { SlidersHorizontal, ArrowUpRight } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { servicesApi, techniciansApi } from '../../api/client.js';
 import LocationPickerMap from './LocationPickerMap.jsx';
@@ -40,9 +41,10 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
     try { await action(); await onRefresh(true); }
     catch(err) { setError(err.message); } finally { setBusy(false); }
   }
-  return <section className="glass-panel rounded-3xl p-6 space-y-4">
-    <h2 className="text-lg font-bold">Available work</h2>
-    <details><summary className="cursor-pointer font-medium">Set work location and services</summary>
+  return <section className="desk-opportunities" id="available-work">
+    <h2>Available work</h2>
+    <details className="desk-prefs"><summary><SlidersHorizontal size={15}/>Work preferences</summary>
+      <p className="text-sm mt-3">{[profile?.approvalStatus && 'Account ' + profile.approvalStatus, profile?.workingHours?.start && [profile.workingHours.start, profile.workingHours.end].join(' – '), profile?.serviceRadiusKm && profile.serviceRadiusKm + ' km radius'].filter(Boolean).join(' · ')}</p>
       <div className="space-y-3 pt-3">
         <LocationPickerMap value={location} onChange={setLocation} height="220px"/>
         <label className="block">Service radius (km) <input type="number" min="1" max="50" value={radius} onChange={e => setRadius(e.target.value)} className="glass-input w-20"/></label>
@@ -52,7 +54,7 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
       </div>
     </details>
     {error && <p role="alert">{error}</p>}
-    {(forming.length > 0 || jobs.length > 0) && <small>Travel estimates use visit order, straight-line distance × 1.35 and 25 km/h from your base. Gross rates exclude expenses and waiting time.</small>}
+
     {loaded && linkedId && !linkedVisible && <p id={'work-' + linkedId} role="status">This request is no longer forming or available for you to claim. Check Assigned Jobs for work you already claimed.</p>}
     {forming.length > 0 && <section className="space-y-2">
       <h3 className="font-semibold">Forming pools</h3>
@@ -86,12 +88,14 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
         </article>;
       })}
     </section>}
-    {jobs.length ? <p className="text-sm">Oldest requests first. Claim a job to add it to your assigned work.</p> :
+    {jobs.length ? <p className="text-sm">Ready to claim · oldest first</p> :
       <p className="text-sm">{forming.length ? 'No locked jobs are ready yet. You can reserve a forming pool above.' : 'No eligible jobs are ready to claim.'}</p>}
-    {jobs.map(j=><article id={'work-' + j.id} key={j.id} className="border rounded-xl p-3 flex items-center justify-between">
-      <div><strong>{j.name}</strong><p>{j.kind} · {j.distanceKm} km away · {j.members} visits · ₹{j.total} total</p>
+    {jobs.map(j=><article id={'work-' + j.id} key={j.id} className="desk-offer">
+      <div><span className="desk-kind">{j.kind === 'pool' ? 'Service pool' : 'Individual booking'}</span><h3>{j.name}</h3><p>{j.distanceKm} km away · {j.members} {j.members === 1 ? 'visit' : 'visits'}</p>
       <WorkEstimate estimate={j.estimate}/><p className="text-sm">{new Date(j.start).toLocaleString()}</p></div>
-      <button className="glass-button-primary px-3 py-2" disabled={busy} onClick={()=>act(()=>techniciansApi.claim(j.id,j.kind))}>Claim job</button>
+      <div className="desk-offer-claim"><strong>₹{j.total}</strong><button className="glass-button-primary" disabled={busy} onClick={()=>act(()=>techniciansApi.claim(j.id,j.kind))}>Claim job<ArrowUpRight size={14}/></button></div>
     </article>)}
+
+    {(forming.length > 0 || jobs.length > 0) && <details className="desk-assumptions"><summary>How estimates work</summary><p>Travel estimates use visit order, straight-line distance × 1.35 and 25 km/h from your base. Gross rates exclude expenses and waiting time.</p></details>}
   </section>;
 }

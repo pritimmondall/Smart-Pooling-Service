@@ -1,0 +1,92 @@
+.tech-desk {
+  --ink: #173833;
+  --muted: #536862;
+  --line: #d4dfd8;
+  --lime: #dbef93;
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+  color: var(--ink);
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.tech-desk > *, .desk-day > *, .desk-market > * {min-width: 0}
+.tech-desk :where(button, a, summary, input, select, textarea):focus-visible {
+  outline: 3px solid #26936e;
+  outline-offset: 3px;
+}
+.tech-desk :where(section, aside, article)[id] {scroll-margin-top: 5.25rem}
+.desk-heading, .desk-controls, .desk-date, .desk-status, .desk-section-title, .desk-schedule header,
+.desk-visit-label, .desk-visit-actions, .desk-address {display:flex;align-items:center}
+.desk-heading, .desk-section-title, .desk-schedule header {justify-content:space-between;gap:16px}
+.desk-heading h1 {font-size:clamp(32px,4vw,52px);font-weight:720;line-height:1.07;letter-spacing:-.055em;margin:7px 0}
+.desk-date {gap:7px;color:var(--muted);font-size:12px;font-weight:650}
+.desk-identity {color:var(--muted);font-size:14px}
+.desk-controls {gap:8px}
+.desk-status,.desk-refresh {background:white;border:1px solid var(--line);border-radius:10px;min-height:42px}
+.desk-refresh {padding:11px}
+.desk-status {padding:0 10px;gap:4px}
+.desk-status select {font-size:13px;font-weight:650;min-height:40px;background:transparent;cursor:pointer}
+.desk-dot {background:#778580;width:8px;height:8px;border-radius:50%}
+.desk-dot.available {background:#38835b}.desk-dot.busy {background:#c58222}
+.desk-metrics {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:white;border:1px solid var(--line);border-radius:18px;padding:17px 0}
+.desk-metrics > * {display:grid;align-content:start;padding:0 clamp(12px,1.8vw,24px);gap:6px;border-right:1px solid var(--line)}
+.desk-metrics > :last-child {border-right:0}
+.desk-metrics span,.desk-metrics small {display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px}
+.desk-metrics span {font-weight:620}.desk-metrics span svg {width:15px;height:15px;flex-shrink:0}
+.desk-metrics strong {font-size:clamp(25px,2.7vw,36px);font-weight:660;letter-spacing:-.05em;line-height:1.18;font-variant-numeric:tabular-nums}
+.desk-metrics strong small {display:inline;font-size:17px;color:#6b7e75;font-weight:500}
+.desk-metrics a:hover span,.desk-metrics a:hover small {color:#105c43}
+.desk-metrics meter {width:85%;height:8px;align-self:center;accent-color:#528564;margin-top:4px}
+.desk-metrics meter::-webkit-meter-bar {background:#e2eae4;border:0;height:5px}
+.desk-metrics meter::-webkit-meter-optimum-value {background:#528564}
+.desk-day,.desk-market {display:grid;grid-template-columns:minmax(0,1.75fr) minmax(215px,1fr);gap:16px;align-items:start}
+.desk-day {align-items:stretch}
+.desk-visit,.desk-schedule,.desk-opportunities,.desk-ledger,.desk-jobs {border-radius:18px;border:1px solid var(--line);background:#fff;padding:clamp(16px,2vw,25px)}
+.tech-desk h2 {font-size:20px;font-weight:690;letter-spacing:-.035em;line-height:1.25}
+.desk-visit {background:#173d36;color:#f5fbf0;border-color:#173d36;overflow:hidden;padding:0;position:relative}
+.desk-visit-info {padding:clamp(20px,2.2vw,30px);position:relative;isolation:isolate;overflow:hidden}
+.desk-visit-info:has(.desk-route-art) {background-image:linear-gradient(115deg,#173d36 48%,transparent 100%),radial-gradient(#517465 1px, transparent 1px);background-size:auto,14px 14px}
+.desk-route-art {width:34%;height:78%;color:#9abc7f;opacity:.4;position:absolute;right:-6%;top:10%;transform:rotate(-12deg);z-index:-1}
+.desk-visit-label {gap:8px;color:var(--lime);margin-bottom:20px}
+.desk-visit-label h2 {font-size:14px;letter-spacing:0}
+.desk-visit h3 {font-size:clamp(25px,3vw,37px);line-height:1.08;font-weight:630;letter-spacing:-.05em;margin:7px 0 12px}
+.desk-stop-meta,.desk-visit-note,.desk-address {font-size:13px;color:#d9e7df;line-height:1.55}
+.desk-visit-note {max-width:76%;margin-bottom:21px}
+.desk-address {gap:8px;align-items:baseline}.desk-address svg {flex:none;align-self:center}
+.desk-visit-actions {gap:12px;flex-wrap:wrap;margin:16px 0}
+.desk-visit-actions a,.desk-primary {display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:13px;font-weight:650;min-height:42px}
+.desk-primary {border-radius:10px;background:var(--lime);color:#193627;padding:9px 15px}.desk-primary:hover {background:#e7f7b4}
+.desk-visit details summary {color:#e2eedd;font-size:12px}
+.desk-visit details ol {border-top:1px solid #58746b;padding-top:9px}.desk-visit details button {color:#ffdec4}
+.desk-map {margin:0 14px 13px}.desk-map .customer-visit-map {height:210px;border-radius:10px}.desk-map small {color:#d9e7df;font-size:11px}
+.desk-schedule {display:flex;flex-direction:column;gap:12px}
+.desk-schedule header svg {color:#5c7168;flex:none}
+.desk-schedule-empty {flex:1;display:grid;align-content:center;justify-items:center;gap:12px;padding:24px 4px;color:var(--muted);font-size:14px}
+.desk-schedule-empty svg {color:#54796a;background:#eaf1e9;border-radius:14px;width:50px;height:50px;padding:12px}
+.desk-opportunities {display:grid;gap:12px}
+.desk-prefs summary,.desk-assumptions summary {cursor:pointer;font-size:13px;font-weight:600;color:#355d4d}
+.desk-prefs summary {display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border-radius:8px;background:#eef3ef}
+.desk-assumptions p,.desk-offer p {font-size:13px;color:var(--muted)}
+.desk-offer {border:1px solid var(--line);border-radius:12px;padding:15px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.desk-kind {font-size:11px;color:#365e4a;font-weight:700}.desk-offer h3 {font-size:18px;font-weight:670}
+.desk-offer-claim {display:grid;gap:8px;justify-items:end}.desk-offer-claim strong {font-size:21px}.desk-offer button {white-space:nowrap;font-size:13px;background:#275c47}
+.desk-ledger {background:#edf3dd;border-color:#d6dfc5}.desk-ledger > svg {color:#557742;margin-bottom:12px}
+.desk-ledger > strong {display:block;font-size:clamp(26px,3vw,38px);letter-spacing:-.055em;font-weight:650;margin-top:10px}
+.desk-ledger p,.desk-ledger dl {font-size:13px;color:#4a6043}
+.desk-ledger dl {margin-top:15px;border-top:1px solid #ccdabd;padding-top:8px}.desk-ledger dl div {display:flex;justify-content:space-between;gap:8px;margin:4px 0}.desk-ledger dd {font-weight:650}
+.desk-jobs .desk-section-title {flex-wrap:wrap}.desk-section-title input {min-width:0;max-width:100%;width:260px}
+.desk-jobs button[aria-pressed=true] {background:#285645;color:white}
+.desk-jobs button[aria-pressed=true] span:last-child {color:#173833;background:#dcead4}
+@media (min-width:768px) and (max-width:1023px) {
+  .desk-day,.desk-market {grid-template-columns:1fr}
+}
+@media (max-width:700px) {
+  .tech-desk {gap:14px}.desk-heading {align-items:flex-start;flex-wrap:wrap}
+  .desk-metrics {grid-template-columns:repeat(2,minmax(0,1fr));padding:0;overflow:hidden}
+  .desk-metrics > * {padding:13px 15px}.desk-metrics > :nth-child(2){border-right:0}
+  .desk-metrics > :nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .desk-day,.desk-market {grid-template-columns:1fr;gap:14px}
+  .desk-schedule-empty {justify-content:start;display:flex;align-items:center;padding:6px 0}
+  .desk-schedule-empty svg {width:36px;height:36px;padding:8px}
+  .desk-offer {flex-wrap:wrap}.desk-section-title input {width:100%}
+}

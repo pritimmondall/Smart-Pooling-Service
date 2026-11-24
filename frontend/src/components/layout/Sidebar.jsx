@@ -72,7 +72,7 @@ export default function Sidebar({ isOpen, onClose }) {
               <NavLink
                 to="/technician/jobs"
                 onClick={() => onClose?.()}
-                className="w-full glass-button-primary bg-indigo-600 hover:bg-indigo-700 py-2.5 px-4 text-xs font-semibold shadow-sm hover:shadow text-white flex items-center justify-center gap-2"
+                className="w-full glass-button-primary bg-[#275c47] hover:bg-[#173d36] py-2.5 px-4 text-xs font-semibold shadow-sm hover:shadow text-white flex items-center justify-center gap-2"
               >
                 <Wrench className="w-4 h-4 stroke-[2.2]" />
                 View Assigned Work
@@ -103,7 +103,7 @@ export default function Sidebar({ isOpen, onClose }) {
                     `flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
                       isActive
                         ? isTechnician
-                          ? 'bg-indigo-50 text-indigo-900 font-semibold border border-indigo-200/60 shadow-xs'
+                          ? 'bg-[#eaf1e9] text-[#173d36] font-semibold border border-[#d4dfd8] shadow-xs'
                           : 'bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200/60 shadow-xs'
                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/70'
                     }`
@@ -117,7 +117,7 @@ export default function Sidebar({ isOpen, onClose }) {
                   {item.badge && unreadCount > 0 && (
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold text-white ${
-                        isTechnician ? 'bg-indigo-600' : 'bg-emerald-600'
+                        isTechnician ? 'bg-[#275c47]' : 'bg-emerald-600'
                       }`}
                     >
                       {unreadCount}
