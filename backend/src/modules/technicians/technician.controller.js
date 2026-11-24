@@ -16,6 +16,64 @@ import { parsePagination } from '../../utils/pagination.js';
 import { sendSuccess } from '../../utils/response.js';
 import { getDateBoundaries, getTechnicianDashboardMetrics } from './technicianMetrics.service.js';
 
+function applyWorkingHours(profile, workingHours) {
+  if (workingHours === undefined) return;
+  if (typeof workingHours !== 'object' || workingHours === null) {
+    throw new AppError(
+      400,
+      'workingHours must be an object with start, end, and daysOfWeek.',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  const { start, end, daysOfWeek } = workingHours;
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+  if (start !== undefined && !timeRegex.test(start)) {
+    throw new AppError(
+      400,
+      'workingHours.start must be in HH:mm 24-hour format (e.g. "09:00").',
+      'VALIDATION_ERROR'
+    );
+  }
+  if (end !== undefined && !timeRegex.test(end)) {
+    throw new AppError(
+      400,
+      'workingHours.end must be in HH:mm 24-hour format (e.g. "18:00").',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  const effectiveStart = start || profile.workingHours?.start || '09:00';
+  const effectiveEnd = end || profile.workingHours?.end || '18:00';
+  if (effectiveStart >= effectiveEnd) {
+    throw new AppError(
+      400,
+      'workingHours.end must be strictly after workingHours.start.',
+      'VALIDATION_ERROR'
+    );
+  }
+
+  if (daysOfWeek !== undefined) {
+    if (
+      !Array.isArray(daysOfWeek) ||
+      !daysOfWeek.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+    ) {
+      throw new AppError(
+        400,
+        'workingHours.daysOfWeek must be an array of integers between 0 (Sunday) and 6 (Saturday).',
+        'VALIDATION_ERROR'
+      );
+    }
+  }
+
+  profile.workingHours = {
+    start: effectiveStart,
+    end: effectiveEnd,
+    daysOfWeek: daysOfWeek || profile.workingHours?.daysOfWeek || [1, 2, 3, 4, 5, 6],
+  };
+}
+
 /**
  * Fetches the authenticated technician's dashboard metrics.
  * Derived strictly from authenticated request user context (req.user._id).
@@ -112,6 +170,7 @@ export const updateMyTechnicianProfile = asyncHandler(async (req, res) => {
     profile.serviceCategories = serviceCategories;
   }
 
+  applyWorkingHours(profile, req.body.workingHours);
   await profile.save();
   await profile.populate('serviceCategories', 'name slug baseIndividualPrice estimatedDurationMins');
   await profile.populate('zoneId', 'name code city');
@@ -184,62 +243,7 @@ export const updateMyAvailability = asyncHandler(async (req, res) => {
   }
 
   // Validate and update working hours if provided
-  if (workingHours !== undefined) {
-    if (typeof workingHours !== 'object' || workingHours === null) {
-      throw new AppError(
-        400,
-        'workingHours must be an object with start, end, and daysOfWeek.',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    const { start, end, daysOfWeek } = workingHours;
-    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-    if (start !== undefined && !timeRegex.test(start)) {
-      throw new AppError(
-        400,
-        'workingHours.start must be in HH:mm 24-hour format (e.g. "09:00").',
-        'VALIDATION_ERROR'
-      );
-    }
-    if (end !== undefined && !timeRegex.test(end)) {
-      throw new AppError(
-        400,
-        'workingHours.end must be in HH:mm 24-hour format (e.g. "18:00").',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    const effectiveStart = start || profile.workingHours?.start || '09:00';
-    const effectiveEnd = end || profile.workingHours?.end || '18:00';
-    if (effectiveStart >= effectiveEnd) {
-      throw new AppError(
-        400,
-        'workingHours.end must be strictly after workingHours.start.',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    if (daysOfWeek !== undefined) {
-      if (
-        !Array.isArray(daysOfWeek) ||
-        !daysOfWeek.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)
-      ) {
-        throw new AppError(
-          400,
-          'workingHours.daysOfWeek must be an array of integers between 0 (Sunday) and 6 (Saturday).',
-          'VALIDATION_ERROR'
-        );
-      }
-    }
-
-    profile.workingHours = {
-      start: effectiveStart,
-      end: effectiveEnd,
-      daysOfWeek: daysOfWeek || profile.workingHours?.daysOfWeek || [1, 2, 3, 4, 5, 6],
-    };
-  }
+  applyWorkingHours(profile, workingHours);
 
   profile.availabilityStatus = availabilityStatus;
   await profile.save();
@@ -304,62 +308,7 @@ export const updateTechnicianAvailabilityAdmin = asyncHandler(async (req, res) =
     }
   }
 
-  if (workingHours !== undefined) {
-    if (typeof workingHours !== 'object' || workingHours === null) {
-      throw new AppError(
-        400,
-        'workingHours must be an object with start, end, and daysOfWeek.',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    const { start, end, daysOfWeek } = workingHours;
-    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-
-    if (start !== undefined && !timeRegex.test(start)) {
-      throw new AppError(
-        400,
-        'workingHours.start must be in HH:mm 24-hour format (e.g. "09:00").',
-        'VALIDATION_ERROR'
-      );
-    }
-    if (end !== undefined && !timeRegex.test(end)) {
-      throw new AppError(
-        400,
-        'workingHours.end must be in HH:mm 24-hour format (e.g. "18:00").',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    const effectiveStart = start || profile.workingHours?.start || '09:00';
-    const effectiveEnd = end || profile.workingHours?.end || '18:00';
-    if (effectiveStart >= effectiveEnd) {
-      throw new AppError(
-        400,
-        'workingHours.end must be strictly after workingHours.start.',
-        'VALIDATION_ERROR'
-      );
-    }
-
-    if (daysOfWeek !== undefined) {
-      if (
-        !Array.isArray(daysOfWeek) ||
-        !daysOfWeek.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)
-      ) {
-        throw new AppError(
-          400,
-          'workingHours.daysOfWeek must be an array of integers between 0 (Sunday) and 6 (Saturday).',
-          'VALIDATION_ERROR'
-        );
-      }
-    }
-
-    profile.workingHours = {
-      start: effectiveStart,
-      end: effectiveEnd,
-      daysOfWeek: daysOfWeek || profile.workingHours?.daysOfWeek || [1, 2, 3, 4, 5, 6],
-    };
-  }
+  applyWorkingHours(profile, workingHours);
 
   profile.availabilityStatus = availabilityStatus;
   await profile.save();

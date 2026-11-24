@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { User, Mail, Phone, ShieldCheck, CheckCircle2, AlertCircle, Save, LogOut } from 'lucide-react';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function ProfilePage() {
   const { user, updateProfile, logout } = useAuth();
@@ -54,10 +54,13 @@ export default function ProfilePage() {
           Account Profile & Settings
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Manage your personal customer profile and contact details
+          Manage your name and contact details.
         </p>
       </div>
 
+      {user?.role === 'technician' && <Link to="/technician/profile-setup" className="glass-button-secondary">
+        Edit technician work profile
+      </Link>}
       {success && (
         <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600" />

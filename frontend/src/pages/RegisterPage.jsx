@@ -54,7 +54,7 @@ export default function RegisterPage() {
         phone: formData.phone.trim(),
         password: formData.password,
       });
-      navigate(location.state?.from || '/', { replace: true });
+      navigate(role === 'technician' ? '/technician/profile-setup' : location.state?.from || '/', { replace: true });
     } catch (err) {
       setError(err.message || 'Registration failed. Please check your information.');
     } finally {
@@ -198,7 +198,7 @@ export default function RegisterPage() {
 
             {role === 'technician' && <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-slate-800">Work location</legend>
-              <p className="text-xs text-slate-600">Select your base on the map or choose a quick zone. You can set your services in the dashboard. An admin must approve your account before you can claim work.</p>
+              <p className="text-xs text-slate-600">Select your base on the map or choose a quick zone. Next, choose your service fields and working hours. An admin must approve your account before you can claim work.</p>
               <LocationPickerMap value={baseLocation} onChange={setBaseLocation} height="200px"/>
             </fieldset>}
 

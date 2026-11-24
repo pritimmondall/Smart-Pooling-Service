@@ -8,6 +8,7 @@ import DashboardLayout from './components/layout/DashboardLayout.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import CustomerDashboard from './pages/CustomerDashboard.jsx';
+import TechnicianProfileSetup from './pages/TechnicianProfileSetup.jsx';
 import TechnicianDashboard from './pages/TechnicianDashboard.jsx';
 import ServicesPage from './pages/ServicesPage.jsx';
 import CreateBookingPage from './pages/CreateBookingPage.jsx';
@@ -43,6 +44,7 @@ export default function App() {
                 {/* Technician-Only Routes */}
                 <Route element={<ProtectedRoute allowedRoles={['technician']} />}>
                   <Route path="/technician/dashboard" element={<TechnicianDashboard />} />
+                  <Route path="/technician/profile-setup" element={<TechnicianProfileSetup />} />
                   <Route path="/technician/jobs" element={<TechnicianDashboard />} />
                 </Route>
 

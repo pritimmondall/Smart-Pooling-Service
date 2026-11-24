@@ -47,12 +47,29 @@ test('three customers see a private visit sequence, follow the technician throug
         await page.type('input[name=password]', password);
         await page.type('input[name=confirmPassword]', password);
         await page.click('button[type=submit]');
-        await page.waitForFunction(() => location.pathname === '/');
+        await page.waitForFunction(expected => location.pathname === expected, {}, role === 'technician' ? '/technician/profile-setup' : '/');
+        if (role === 'technician') {
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await click(page, 'Save work profile');
+          await page.waitForFunction(() => document.body.innerText.includes('Select at least one service field.'));
+          await page.click('input[name=serviceCategories][value="' + service.id + '"]');
+          await page.$eval('input[name=serviceRadiusKm]', input => {
+            input.focus();
+            input.select();
+          });
+          await page.keyboard.type('14');
+          await page.click('input[name=workingDay][value="6"]');
+          await click(page, 'Save work profile');
+          await page.waitForSelector('.tech-desk');
+        }
         const user = await User.findOne({ email: role + '@registration.example' });
         assert.equal(user.role, role);
         const profile = await TechnicianProfile.findOne({ userId: user._id });
         if (role === 'technician') {
           assert.equal(profile.approvalStatus, 'pending');
+          assert.equal(profile.serviceRadiusKm, 14);
+          assert.deepEqual(Array.from(profile.workingHours.daysOfWeek), [1, 2, 3, 4, 5]);
+          assert.deepEqual(profile.serviceCategories.map(String), [service.id]);
           assert.deepEqual(Array.from(profile.baseLocation.coordinates), [88.3639, 22.5176]);
           await page.waitForSelector('.tech-desk');
         } else {

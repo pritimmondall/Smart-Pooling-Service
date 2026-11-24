@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { SlidersHorizontal, ArrowUpRight } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
-import { servicesApi, techniciansApi } from '../../api/client.js';
-import LocationPickerMap from './LocationPickerMap.jsx';
+import { Link, useSearchParams } from 'react-router-dom';
+import { techniciansApi } from '../../api/client.js';
 
 function WorkEstimate({ estimate }) {
   if (!estimate) return null;
@@ -16,22 +15,8 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
   const forming = opportunities?.meta?.formingPools || [];
   const jobs = opportunities?.data || [];
   const loaded = Boolean(opportunities);
-  const [catalog, setCatalog] = useState([]);
-  const [location, setLocation] = useState(null);
-  const [selected, setSelected] = useState([]);
-  const [radius, setRadius] = useState(10);
-  useEffect(() => { setRadius(profile?.serviceRadiusKm ?? 10); }, [profile?.serviceRadiusKm]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const base = JSON.stringify(profile?.baseLocation || null);
-  const skills = JSON.stringify(profile?.serviceCategories?.map(c => c._id) || []);
-  useEffect(() => { setLocation(JSON.parse(base)); }, [base]);
-  useEffect(() => { setSelected(JSON.parse(skills)); }, [skills]);
-  useEffect(() => {
-    let active = true;
-    servicesApi.listActive().then(res => active && setCatalog(res.data)).catch(err => active && setError(err.message));
-    return () => { active = false; };
-  }, []);
   const linkedVisible = [...forming, ...jobs].some(job => job.id === linkedId);
   useEffect(() => {
     if (linkedId && loaded) document.getElementById('work-' + linkedId)?.scrollIntoView({ block: 'center' });
@@ -43,16 +28,10 @@ export default function TechnicianOpportunities({ profile, onRefresh, opportunit
   }
   return <section className="desk-opportunities" id="available-work">
     <h2>Available work</h2>
-    <details className="desk-prefs"><summary><SlidersHorizontal size={15}/>Work preferences</summary>
-      <p className="text-sm mt-3">{[profile?.approvalStatus && 'Account ' + profile.approvalStatus, profile?.workingHours?.start && [profile.workingHours.start, profile.workingHours.end].join(' – '), profile?.serviceRadiusKm && profile.serviceRadiusKm + ' km radius'].filter(Boolean).join(' · ')}</p>
-      <div className="space-y-3 pt-3">
-        <LocationPickerMap value={location} onChange={setLocation} height="220px"/>
-        <label className="block">Service radius (km) <input type="number" min="1" max="50" value={radius} onChange={e => setRadius(e.target.value)} className="glass-input w-20"/></label>
-        <fieldset><legend>Services you offer</legend>{catalog.map(c=><label className="inline-flex gap-2 mr-4" key={c._id}>
-          <input type="checkbox" checked={selected.includes(c._id)} onChange={e=>setSelected(e.target.checked?[...selected,c._id]:selected.filter(id=>id!==c._id))}/>{c.name}</label>)}</fieldset>
-        <button disabled={busy || !location || !(Number(radius) >= 1 && Number(radius) <= 50)} onClick={()=>act(()=>techniciansApi.updateProfile({ baseLocation: location, serviceRadiusKm: Number(radius), serviceCategories: selected }))} className="glass-button-secondary px-4 py-2">Save work preferences</button>
-      </div>
-    </details>
+    <Link to="/technician/profile-setup" className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-800">
+      <SlidersHorizontal size={15}/>{profile?.serviceCategories?.length ? 'Edit work preferences' : 'Complete your work profile'}
+    </Link>
+    {profile?.approvalStatus === 'pending' && <p className="text-sm text-slate-600">Admin approval is pending. You can claim work after approval.</p>}
     {error && <p role="alert">{error}</p>}
 
     {loaded && linkedId && !linkedVisible && <p id={'work-' + linkedId} role="status">This request is no longer forming or available for you to claim. Check Assigned Jobs for work you already claimed.</p>}
