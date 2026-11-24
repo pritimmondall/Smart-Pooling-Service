@@ -34,6 +34,37 @@ test('three customers see a private visit sequence, follow the technician throug
   const browser = await puppeteer.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' });
   t.after(() => browser.close());
 
+  await t.test('sign-up creates the selected account type', async () => {
+    for (const role of ['customer', 'technician']) {
+      const context = await browser.createBrowserContext();
+      try {
+        const page = await context.newPage();
+        await page.goto(origin + '/register', { waitUntil: 'domcontentloaded' });
+        await page.click(`input[name=role][value=${role}]`);
+        if (role === 'technician') await click(page, 'Ballygunge');
+        await page.type('input[name=name]', 'New ' + role);
+        await page.type('input[name=email]', role + '@registration.example');
+        await page.type('input[name=password]', password);
+        await page.type('input[name=confirmPassword]', password);
+        await page.click('button[type=submit]');
+        await page.waitForFunction(() => location.pathname === '/');
+        const user = await User.findOne({ email: role + '@registration.example' });
+        assert.equal(user.role, role);
+        const profile = await TechnicianProfile.findOne({ userId: user._id });
+        if (role === 'technician') {
+          assert.equal(profile.approvalStatus, 'pending');
+          assert.deepEqual(Array.from(profile.baseLocation.coordinates), [88.3639, 22.5176]);
+          await page.waitForSelector('.tech-desk');
+        } else {
+          assert.equal(profile, null);
+          await page.waitForSelector('a[href="/create-booking"]');
+        }
+      } finally {
+        await context.close();
+      }
+    }
+  });
+
   async function login(account) {
     const context = await browser.createBrowserContext();
     const page = await context.newPage();

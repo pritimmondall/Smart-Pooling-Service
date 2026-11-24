@@ -64,10 +64,7 @@ export function AuthProvider({ children }) {
 
   const register = async (formData) => {
     setAuthError(null);
-    const res = await authApi.register({
-      ...formData,
-      role: 'customer',
-    });
+    const res = await authApi.register(formData);
     const { token: newToken, user: userData } = res.data;
 
     localStorage.setItem('smartpool_token', newToken);

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, ArrowRight, Lock, Mail, User, Phone, AlertCircle } from 'lucide-react';
+import { Sparkles, ArrowRight, Lock, Mail, User, Phone, AlertCircle, Wrench } from 'lucide-react';
+import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function RegisterPage() {
@@ -8,6 +9,8 @@ export default function RegisterPage() {
   const location = useLocation();
   const navigate = useNavigate();
 
+  const [role, setRole] = useState('customer');
+  const [baseLocation, setBaseLocation] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -36,9 +39,16 @@ export default function RegisterPage() {
       return;
     }
 
+    if (role === 'technician' && !baseLocation) {
+      setError('Select your work location on the map or choose a quick zone.');
+      return;
+    }
+
     try {
       setLoading(true);
       await register({
+        role,
+        ...(role === 'technician' ? { baseLocation } : {}),
         name: formData.name.trim(),
         email: formData.email.trim().toLowerCase(),
         phone: formData.phone.trim(),
@@ -61,23 +71,42 @@ export default function RegisterPage() {
             <Sparkles className="w-6 h-6 stroke-[2]" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Create Customer Account
+            Create your account
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Join SmartPool to book and pool home services in your area
+            Choose how you’ll use SmartPool.
           </p>
         </div>
 
         {/* Card */}
         <div className="glass-panel bg-white/85 rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/80">
           {error && (
-            <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-start gap-2.5">
+            <div role="alert" className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200/80 text-rose-700 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            <fieldset disabled={loading}>
+              <legend className="text-xs font-semibold text-slate-700 mb-2">Account type</legend>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'customer', label: 'Customer', detail: 'Book home services', icon: User },
+                  { value: 'technician', label: 'Technician', detail: 'Provide services', icon: Wrench },
+                ].map(({ value, label, detail, icon: Icon }) => (
+                  <label key={value} className={`rounded-xl border p-3 cursor-pointer focus-within:ring-2 focus-within:ring-emerald-600 ${role === value
+                    ? 'border-emerald-600 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-white text-slate-700'}`}>
+                    <span className="flex justify-between items-center"><Icon size={17}/>
+                      <input type="radio" name="role" value={value} checked={role === value} className="accent-emerald-700"
+                        onChange={() => { setRole(value); setError(null); }}/>
+                    </span>
+                    <strong className="block text-sm mt-2">{label}</strong>
+                    <span className="text-xs">{detail}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Full Name
@@ -166,6 +195,12 @@ export default function RegisterPage() {
                 />
               </div>
             </div>
+
+            {role === 'technician' && <fieldset className="space-y-2">
+              <legend className="text-sm font-semibold text-slate-800">Work location</legend>
+              <p className="text-xs text-slate-600">Select your base on the map or choose a quick zone. You can set your services in the dashboard. An admin must approve your account before you can claim work.</p>
+              <LocationPickerMap value={baseLocation} onChange={setBaseLocation} height="200px"/>
+            </fieldset>}
 
             <button
               type="submit"
