@@ -1,0 +1,103 @@
+import React, { useState } from 'react';
+import { Calendar, MapPin, Navigation, Phone } from 'lucide-react';
+import { techniciansApi } from '../../api/client.js';
+import VisitMap from './VisitMap.jsx';
+import Modal from './Modal.jsx';
+
+const onSite = status => ['arrived', 'in_progress'].includes(status);
+const time = value => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+export default function TechnicianDay({ routes, processing, onArrive, onStart, onComplete, openIncident }) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  const ordered = routes.filter(route => route.stops.length).slice()
+    .sort((a, b) => new Date(a.timeWindow.start) - new Date(b.timeWindow.start));
+  const candidates = ordered.filter(route => route.status !== 'assigned');
+  const next = candidates.find(route => onSite(route.stops[0].status)) || candidates[0];
+  const stop = next?.stops[0];
+  const points = next?.stops.filter(s => s.location?.coordinates).map(s => ({
+    point: s.location.coordinates, number: s.sequenceIndex, status: s.status,
+  })) || [];
+  const schedule = ordered.filter(route => new Date(route.timeWindow.start) < tomorrow && new Date(route.timeWindow.end) >= today);
+  const action = stop?.status === 'in_progress' ? [onComplete, 'Complete Service'] :
+    stop?.status === 'arrived' ? [onStart, 'Start Service'] : [onArrive, 'Mark Arrived'];
+  return <section className="glass-panel rounded-3xl p-6 space-y-5">
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div className="space-y-3">
+        <h2 className="text-lg font-bold flex gap-2 items-center"><MapPin size={20}/>Next visit</h2>
+        {stop ? <>
+          <p className="text-sm text-slate-600">{next.serviceCategory?.name} · Stop {stop.sequenceIndex} · {stop.status.replace('_',' ')}</p>
+          <h3 className="text-xl font-semibold">{stop.customer.name}</h3>
+          <p>{stop.addressText}</p>
+          <p className="text-sm">{new Date(stop.timeWindow.start).toLocaleDateString()} · {time(stop.timeWindow.start)} – {time(stop.timeWindow.end)}</p>
+          <div className="flex flex-wrap gap-4 text-sm text-indigo-700">
+            {stop.customer.phone && stop.customer.phone !== 'N/A' && <a className="inline-flex items-center gap-1" href={'tel:' + stop.customer.phone}><Phone size={15}/>{stop.customer.phone}</a>}
+            {stop.location?.coordinates && <a className="inline-flex items-center gap-1" target="_blank" rel="noreferrer"
+              href={'https://www.google.com/maps/dir/?api=1&destination=' + stop.location.coordinates.slice().reverse().join(',')}><Navigation size={15}/>Directions</a>}
+          </div>
+          <button className="glass-button-primary px-4 py-2" disabled={processing[stop.bookingId]}
+            onClick={() => action[0](next.jobId, stop.bookingId)}>{action[1]}</button>
+          <details><summary className="cursor-pointer text-sm font-semibold">Remaining visits and exceptions</summary>
+            <ol className="mt-2 space-y-2">{next.stops.map(visit => <li key={visit.bookingId} className="flex justify-between gap-2 text-sm">
+              <span>{visit.sequenceIndex}. {visit.customer.name} · {visit.addressText}</span>
+              <button className="text-rose-700 shrink-0" onClick={() => openIncident(next, visit)}>Report issue</button>
+            </li>)}</ol>
+          </details>
+        </> : <p className="text-slate-600">Your next visit appears when you accept an assignment.</p>}
+      </div>
+      {points.length > 0 && <div><VisitMap precise route={{ line: [], stops: points }}/>
+        <small>Numbered service addresses in visit order. Dashed segments show the sequence.</small></div>}
+    </div>
+    <div className="border-t pt-4 space-y-2"><h3 className="font-semibold flex items-center gap-2"><Calendar size={18}/>Today’s schedule</h3>
+      {!schedule.length && <p className="text-sm text-slate-600">No remaining visits scheduled for today.</p>}
+      {schedule.map(route => {
+        const conflict = schedule.some(other => other.jobId !== route.jobId &&
+          new Date(other.timeWindow.start) < new Date(route.timeWindow.end) && new Date(route.timeWindow.start) < new Date(other.timeWindow.end));
+        return <div key={route.jobId} className="rounded-xl bg-slate-50 p-3 text-sm">
+          <strong>{time(route.timeWindow.start)} – {time(route.timeWindow.end)} · {route.serviceCategory?.name}</strong>
+          <span> · {route.status.replace('_',' ')}</span>{conflict && <strong className="text-amber-700"> · Overlapping job windows</strong>}
+          {route.stops.map(visit => <div key={visit.bookingId} className="flex justify-between gap-3 mt-1">
+            <span>{visit.sequenceIndex}. {visit.customer.name} · {visit.addressText}
+              {Date.now() > Date.parse(visit.timeWindow.end) && <strong className="text-rose-700"> · Window elapsed</strong>}
+              {visit.estimatedArrival && Date.parse(visit.estimatedArrival) > Date.parse(visit.timeWindow.end) && <span> · Estimated late arrival</span>}</span>
+            {route.status !== 'assigned' && <button className="text-rose-700 shrink-0" onClick={() => openIncident(route, visit)}>Report issue</button>}
+          </div>)}
+        </div>;
+      })}
+    </div>
+
+  </section>;
+}
+
+export function VisitException({ incident, onClose, onRefresh, onFeedback }) {
+  const [reason, setReason] = useState('Customer unavailable');
+  const [details, setDetails] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  async function cancelVisit() {
+    if (saving || !incident) return;
+    setSaving(true);
+    try {
+      await techniciansApi.cancelJobStop(incident.route.jobId, incident.visit.bookingId,
+        [reason === 'Other' ? '' : reason, details.trim()].filter(Boolean).join(' — '));
+      onClose();
+      await onRefresh(true);
+      onFeedback('Visit cancelled. The customer has been notified.');
+    } catch (err) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+  return (
+    <Modal isOpen={Boolean(incident)} onClose={() => !saving && onClose()} title="Cancel visit">
+      {incident && <div className="space-y-3"><p>Cancel the visit to {incident.visit.customer.name}? The customer will receive the reason.
+        {incident.route.stops.length > 1 && ' Other visits in this pool will continue.'}</p>
+        <label className="block">Reason<select className="glass-input block w-full" value={reason} onChange={e => setReason(e.target.value)}>
+          {['Customer unavailable', 'Cannot access building', 'Other'].map(value => <option key={value}>{value}</option>)}</select></label>
+        <label className="block">Details {reason === 'Other' ? '(required)' : '(optional)'}<textarea className="glass-input block w-full" maxLength={420} value={details} onChange={e => setDetails(e.target.value)}/></label>
+        {error && <p role="alert">{error}</p>}
+        <button className="glass-button-primary px-4 py-2" disabled={saving || (reason === 'Other' && !details.trim())} onClick={cancelVisit}>Confirm visit cancellation</button>
+      </div>}
+    </Modal>
+  );
+}

@@ -119,6 +119,7 @@ router.patch(
   requireBodyFields('status'),
   updateAssignedJobStatus
 );
+router.post('/me/jobs/:id/replan', authorizeRoles('technician'), validateObjectIdParam('id'), getOptimizedRouteForJob);
 router.get(
   '/me/jobs/:id/route',
   authorizeRoles('technician'),

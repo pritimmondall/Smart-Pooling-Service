@@ -154,13 +154,16 @@ export const notificationsApi = {
 export const techniciansApi = {
   opportunities: () => api.get('/technicians/me/opportunities'),
   claim: (id, kind) => api.post(`/technicians/me/opportunities/${id}/claim`, { kind }),
-  getEarnings: () => api.get('/technicians/me/earnings'),
+  getEarnings: () => api.get('/technicians/me/earnings?timezone=' + encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)),
+  activeRoutes: () => api.get('/technicians/me/routes'),
+  replan: id => api.post(`/technicians/me/jobs/${id}/replan`),
   getMe: () => api.get('/technicians/me'),
   updateProfile: (data) => api.patch('/technicians/me/profile', data),
   updateAvailability: (data) => api.patch('/technicians/me/availability', data),
   getMyJobs: (params = {}) => {
     const search = new URLSearchParams();
     if (params.status) search.set('status', params.status);
+    if (params.q) search.set('q', params.q);
     if (params.type) search.set('type', params.type);
     if (params.page) search.set('page', params.page);
     if (params.limit) search.set('limit', params.limit);

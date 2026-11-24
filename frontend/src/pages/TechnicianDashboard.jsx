@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Wrench,
   CheckCircle2,
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { techniciansApi } from '../api/client.js';
+import TechnicianDay, { VisitException } from '../components/common/TechnicianDay.jsx';
 import TechnicianOpportunities from '../components/common/TechnicianOpportunities.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 import LoadingSpinner from '../components/common/LoadingSpinner.jsx';
@@ -49,10 +50,21 @@ export default function TechnicianDashboard() {
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
 
+  const [counts, setCounts] = useState({});
+  const [routes, setRoutes] = useState([]);
+  const [opportunities, setOpportunities] = useState(null);
+  const requestId = useRef(0);
+
   // Filters
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(searchQuery.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Availability mutation state
   const [updatingAvailability, setUpdatingAvailability] = useState(false);
@@ -81,6 +93,8 @@ export default function TechnicianDashboard() {
   const [cancellationReason, setCancellationReason] = useState('');
 
   // Stop-level progression state for pooled jobs
+  const [incident, setIncident] = useState(null);
+  const openIncident = (route, visit) => setIncident({ route, visit });
   const [jobStops, setJobStops] = useState({});
   const [stopsLoading, setStopsLoading] = useState({});
   const [stopsError, setStopsError] = useState({});
@@ -120,22 +134,28 @@ export default function TechnicianDashboard() {
 
   // Fetch technician profile and assigned jobs
   const fetchData = useCallback(async (isSilent = false) => {
+    const request = ++requestId.current;
     try {
       if (!isSilent) setLoading(true);
       else setRefreshing(true);
       setError(null);
 
-      const [profileRes, jobsRes, earningsRes] = await Promise.all([
+      const [profileRes, jobsRes, earningsRes, routeRes, workRes] = await Promise.all([
         techniciansApi.getMe(),
 
-        techniciansApi.getMyJobs({ limit: 50, page: jobPage }),
-        techniciansApi.getEarnings(),
+        techniciansApi.getMyJobs({ limit: 50, page: jobPage, status: statusFilter === 'all' ? undefined : statusFilter, type: typeFilter === 'all' ? undefined : typeFilter, q: query }),
+        techniciansApi.getEarnings(), techniciansApi.activeRoutes(), techniciansApi.opportunities(),
       ]);
 
+      if (request !== requestId.current) return;
+      setCounts(jobsRes.meta.counts);
+      setRoutes(routeRes.data);
+      setOpportunities(workRes);
       const fetchedJobs = jobsRes?.data || [];
       setProfile(profileRes?.data || null);
       setJobs(fetchedJobs);
       setJobPages(jobsRes.meta.pagination.pages);
+      if (jobPage > jobsRes.meta.pagination.pages) setJobPage(jobsRes.meta.pagination.pages);
       setEarnings(earningsRes.data);
 
       // Pre-load stops for active pooled jobs and expand them by default
@@ -147,15 +167,16 @@ export default function TechnicianDashboard() {
         setExpandedStops((prev) => (prev[pool._id] === undefined ? { ...prev, [pool._id]: true } : prev));
       }
     } catch (err) {
-      setError(err.message || 'Failed to load technician dashboard data.');
+      if (request === requestId.current) setError(err.message || 'Failed to load technician dashboard data.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (request === requestId.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [fetchStops, jobPage]);
+  }, [fetchStops, jobPage, statusFilter, typeFilter, query]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
+    const timer = setInterval(() => fetchData(true), 15000);
+    return () => { clearInterval(timer); requestId.current++; };
   }, [fetchData]);
 
   // Flash message helper
@@ -344,7 +365,7 @@ export default function TechnicianDashboard() {
   };
 
   // Open Route Modal
-  const handleViewRoute = async (job) => {
+  const handleViewRoute = async (job, replan = false) => {
     setActiveRouteJob(job);
     setRouteModalOpen(true);
     setRouteLoading(true);
@@ -352,7 +373,8 @@ export default function TechnicianDashboard() {
     setRouteError(null);
 
     try {
-      const res = await techniciansApi.getJobRoute(job._id);
+      const res = replan ? await techniciansApi.replan(job._id) : await techniciansApi.getJobRoute(job._id);
+      if (replan) await fetchData(true);
       setRouteData(res?.data || null);
     } catch (err) {
       setRouteError(err.message || 'Failed to load optimized route information.');
@@ -376,42 +398,13 @@ export default function TechnicianDashboard() {
     }
   };
 
-  // Filter Jobs
-  const filteredJobs = jobs.filter((job) => {
-    // Status filter
-    if (statusFilter !== 'all' && job.status !== statusFilter) {
-      return false;
-    }
-    // Type filter
-    if (typeFilter !== 'all' && job.jobType !== typeFilter) {
-      return false;
-    }
-    // Search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const catMatch = (job.specificService || job.serviceCategory?.name)?.toLowerCase().includes(q);
-      const zoneMatch = job.zone?.name?.toLowerCase().includes(q);
-      const custMatch =
-        job.customer?.name?.toLowerCase().includes(q) ||
-        job.customer?.phone?.toLowerCase().includes(q);
-      const addrMatch = job.addressText?.toLowerCase().includes(q);
-      const idMatch = job._id?.toLowerCase().includes(q);
-      if (!catMatch && !zoneMatch && !custMatch && !addrMatch && !idMatch) {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  // Computed metrics
-  const activeJobs = jobs.filter((j) => ['assigned', 'accepted', 'in_progress'].includes(j.status));
-  const inProgressJobs = jobs.filter((j) => j.status === 'in_progress');
-  const pendingAssignments = jobs.filter((j) => j.status === 'assigned');
-  const completedJobsList = jobs.filter((j) => j.status === 'completed');
-
+  const filteredJobs = jobs;
+  const inProgress = (counts.in_progress || 0) + (counts.arrived || 0);
+  const pending = counts.assigned || 0;
+  const activeCount = pending + inProgress + (counts.accepted || 0);
   const maxCapacity = profile?.maxPoolCapacity || 4;
-  const currentWorkload = profile?.activeWorkload !== undefined ? profile.activeWorkload : activeJobs.length;
-  const isBusy = profile?.availabilityStatus === 'busy' || inProgressJobs.length > 0 || currentWorkload >= maxCapacity;
+  const currentWorkload = profile?.activeWorkload !== undefined ? profile.activeWorkload : activeCount;
+  const isBusy = profile?.availabilityStatus === 'busy' || inProgress > 0 || currentWorkload >= maxCapacity;
 
   if (loading) {
     return <LoadingSpinner label="Loading technician dashboard..." size="lg" className="py-24" />;
@@ -543,10 +536,14 @@ export default function TechnicianDashboard() {
         </div>
       </div>
 
-      <TechnicianOpportunities profile={profile} onRefresh={fetchData}/>
+      <TechnicianDay routes={routes} processing={processingStops} onArrive={handleArriveStop} onStart={handleStartStop}
+        onComplete={handleCompleteStop} openIncident={openIncident}/>
+      {incident && <VisitException incident={incident} onClose={() => setIncident(null)} onRefresh={fetchData} onFeedback={showFeedback}/>}
+      <TechnicianOpportunities opportunities={opportunities} profile={profile} onRefresh={fetchData}/>
       {earnings && <section className="glass-panel rounded-3xl p-6">
         <h2 className="text-lg font-bold">Estimated earnings</h2>
         <p className="text-2xl font-bold">₹{(earnings.totalPaise / 100).toFixed(2)}</p>
+        <p>Today · ₹{(earnings.todayPaise / 100).toFixed(2)}</p>
         <p className="text-sm text-slate-600">{earnings.completedServices} completed services · ₹{(earnings.servicePaise / 100).toFixed(2)} in completed customer fares</p>
       </section>}
 
@@ -613,13 +610,13 @@ export default function TechnicianDashboard() {
                 updatingAvailability ||
                 profile?.availabilityStatus === 'available' ||
                 profile?.approvalStatus !== 'approved' ||
-                inProgressJobs.length > 0 ||
+                inProgress > 0 ||
                 currentWorkload >= maxCapacity
               }
               title={
                 profile?.approvalStatus !== 'approved'
                   ? 'Account must be approved by admin'
-                  : inProgressJobs.length > 0
+                  : inProgress > 0
                   ? 'Cannot set available while a job is in progress'
                   : currentWorkload >= maxCapacity
                   ? 'Capacity limit reached'
@@ -703,7 +700,7 @@ export default function TechnicianDashboard() {
             <CheckSquare className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="text-2xl font-bold text-slate-900">
-            {profile?.jobsCompleted || completedJobsList.length}
+            {profile?.jobsCompleted || counts.completed || 0}
           </div>
           <p className="text-[11px] text-slate-400 mt-3">
             Successfully serviced & verified jobs
@@ -717,10 +714,10 @@ export default function TechnicianDashboard() {
             <AlertTriangle className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-2xl font-bold text-amber-600">
-            {pendingAssignments.length}
+            {pending}
           </div>
           <p className="text-[11px] text-slate-400 mt-3">
-            {pendingAssignments.length > 0
+            {pending > 0
               ? 'Requires your acceptance or rejection'
               : 'All assignments processed'}
           </p>
@@ -733,7 +730,7 @@ export default function TechnicianDashboard() {
             <Clock className="w-4 h-4 text-teal-600" />
           </div>
           <div className="text-2xl font-bold text-slate-900">
-            {inProgressJobs.length}
+            {inProgress}
           </div>
           <p className="text-[11px] text-slate-400 mt-3">
             Currently active field executions
@@ -761,7 +758,7 @@ export default function TechnicianDashboard() {
               type="text"
               placeholder="Search by customer, category, address..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setJobPage(1); setSearchQuery(e.target.value); }}
               className="glass-input w-full text-xs py-2 px-3"
             />
           </div>
@@ -772,17 +769,18 @@ export default function TechnicianDashboard() {
           {/* Status Tabs */}
           <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl">
             {[
-              { id: 'all', label: 'All Jobs', count: jobs.length },
-              { id: 'assigned', label: 'Assigned', count: jobs.filter((j) => j.status === 'assigned').length },
-              { id: 'accepted', label: 'Accepted', count: jobs.filter((j) => j.status === 'accepted').length },
-              { id: 'in_progress', label: 'In Progress', count: jobs.filter((j) => j.status === 'in_progress').length },
-              { id: 'completed', label: 'Completed', count: jobs.filter((j) => j.status === 'completed').length },
-              { id: 'cancelled', label: 'Cancelled', count: jobs.filter((j) => j.status === 'cancelled').length },
+              { id: 'all', label: 'All Jobs', count: counts.all || 0 },
+              { id: 'assigned', label: 'Assigned', count: counts.assigned || 0 },
+              { id: 'arrived', label: 'Arrived', count: counts.arrived || 0 },
+              { id: 'accepted', label: 'Accepted', count: counts.accepted || 0 },
+              { id: 'in_progress', label: 'In Progress', count: counts.in_progress || 0 },
+              { id: 'completed', label: 'Completed', count: counts.completed || 0 },
+              { id: 'cancelled', label: 'Cancelled', count: counts.cancelled || 0 },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setStatusFilter(tab.id)}
+                onClick={() => { setJobPage(1); setStatusFilter(tab.id); }}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   statusFilter === tab.id
                     ? 'bg-white text-indigo-900 shadow-xs'
@@ -806,7 +804,7 @@ export default function TechnicianDashboard() {
             <span>Type:</span>
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => { setJobPage(1); setTypeFilter(e.target.value); }}
               className="glass-input text-xs py-1 px-2.5 rounded-lg bg-white"
             >
               <option value="all">All Types</option>
@@ -969,16 +967,17 @@ export default function TechnicianDashboard() {
 
                     {/* Action Buttons & Workflow State Machine */}
                     <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end justify-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
-                      {/* Route Optimization Button (especially prominent for pooled work) */}
-                      <button
+                      { ['assigned', 'accepted', 'arrived', 'in_progress'].includes(job.status) && <button
                         type="button"
                         onClick={() => handleViewRoute(job)}
                         className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200/80 hover:bg-indigo-100 flex items-center justify-center gap-1.5 transition-colors"
                       >
                         <Car className="w-4 h-4" />
                         {isPool ? 'View Optimized Route' : 'View Stop & Route'}
-                      </button>
+                      </button>}
 
+                      {isPool && !job.poolScope && ['accepted','in_progress'].includes(job.status) && <button
+                        className="text-xs font-semibold text-indigo-700" onClick={() => handleViewRoute(job, true)}>Replan remaining visits</button>}
                       {/* Details Button */}
                       <button
                         type="button"
@@ -1278,6 +1277,10 @@ export default function TechnicianDashboard() {
                                         </div>
                                       )}
 
+                                      {!isCompleted && !isCancelled && ['accepted','in_progress'].includes(job.status) && <button
+                                        className="text-xs text-rose-700 mt-2" onClick={() => openIncident({
+                                          jobId: job._id, stops: jobStops[job._id].stops.filter(s => !['completed','cancelled'].includes(s.status))
+                                        }, stop)}>Report visit issue</button>}
                                       {/* Stop Action Bar */}
                                       <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
                                         {job.status === 'assigned' ? (
@@ -1384,7 +1387,7 @@ export default function TechnicianDashboard() {
                     <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
                     Road Routing Unavailable (Fallback Sequence)
                   </span>
-                ) : routeData.measurementType === 'actual_road_network' || routeData.optimizationStatus === 'optimal_road_network' || routeData.provider === 'osrm' ? (
+                ) : routeData.measurementType === 'actual_road_network' || routeData.provider === 'osrm' ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     Actual Road Network (OSRM)
@@ -1405,18 +1408,18 @@ export default function TechnicianDashboard() {
               <div className="flex items-center gap-2 text-slate-500 text-[11px]">
                 {routeData.originSource && (
                   <span className="px-2 py-0.5 rounded-md bg-slate-200/70 text-slate-700 font-medium">
-                    Origin: {routeData.originSource === 'live_gps' ? 'Live GPS' : 'Base Location'}
+                    Origin: {routeData.originSource === 'live_gps' ? 'Live GPS' : routeData.originSource === 'override' ? 'Selected location' : 'Base Location'}
                     {routeData.isOriginStale ? ' (Stale)' : ''}
                   </span>
                 )}
                 <span>
                   Algorithm:{' '}
                   <strong className="text-slate-700">
-                    {routeData.algorithm === 'exact_branch_and_bound'
+                    {routeData.algorithm === 'branch_and_bound_exact'
                       ? 'Exact Branch & Bound (TSPTW)'
-                      : routeData.algorithm === 'greedy_nearest_neighbor'
-                      ? 'Nearest Neighbor Heuristic'
-                      : routeData.algorithm || 'Standard Route'}
+                      : routeData.algorithm === 'nearest_neighbor_2opt'
+                      ? 'Nearest Neighbor with 2-opt'
+                      : routeData.algorithm?.replaceAll('_', ' ') || 'Standard Route'}
                   </strong>
                 </span>
                 {routeData.isGloballyOptimal && (
@@ -1630,14 +1633,15 @@ export default function TechnicianDashboard() {
                   Pool Members ({selectedJob.members.length} Active Customers)
                 </h4>
                 <div className="space-y-2">
-                  {selectedJob.members.map((m, idx) => (
+                  {selectedJob.status === 'completed' && <p>Completed visit fares · ₹{selectedJob.members.reduce((sum,m) => sum + (m.earned || 0), 0).toFixed(2)}</p>}
+                  {selectedJob.members.slice().sort((a,b) => a.memberIndex - b.memberIndex).map((m, idx) => (
                     <div
                       key={m.bookingId || idx}
                       className="p-3 rounded-xl border border-slate-200 bg-white space-y-1"
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-slate-800">
-                          Stop #{idx + 1}: {m.customer?.name || 'Customer'}
+                          Stop #{m.memberIndex}: {m.customer?.name || 'Customer'}
                         </span>
                         {m.customer?.phone && (
                           <a
@@ -1652,6 +1656,7 @@ export default function TechnicianDashboard() {
                       <p className="text-slate-500 text-[11px]">
                         Address: {m.addressText || 'Customer service address'}
                       </p>
+                      {selectedJob.status === 'completed' && <p>Visit fare earned · ₹{(m.earned || 0).toFixed(2)}</p>}
                       {m.notes && (
                         <p className="text-slate-600 bg-slate-50 p-2 rounded-lg text-[11px] italic">
                           Notes: &ldquo;{m.notes}&rdquo;

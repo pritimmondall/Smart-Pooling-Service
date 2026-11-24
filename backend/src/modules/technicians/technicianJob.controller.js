@@ -33,30 +33,12 @@ export const getMyAssignedJobs = asyncHandler(async (req, res) => {
     poolId: null, // Only individual bookings here
   };
 
-  if (statusFilter) {
-    poolQuery.status = statusFilter;
-    bookingQuery.status = statusFilter;
-  }
-
-  let pools = [];
-  let bookings = [];
-
-  if (!typeFilter || typeFilter === 'pool') {
-    pools = await ServicePool.find(poolQuery)
-      .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
-      .populate('zoneId', 'name code city')
-      .sort({ createdAt: -1 })
-      .lean();
-  }
-
-  if (!typeFilter || typeFilter === 'individual') {
-    bookings = await Booking.find(bookingQuery)
-      .populate('customerId', 'name email phone')
-      .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
-      .populate('zoneId', 'name code city')
-      .sort({ createdAt: -1 })
-      .lean();
-  }
+  const [pools, bookings] = await Promise.all([
+    ServicePool.find(poolQuery).populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
+      .populate('zoneId', 'name code city').lean(),
+    Booking.find(bookingQuery).populate('customerId', 'name email phone')
+      .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins').populate('zoneId', 'name code city').lean(),
+  ]);
 
   // Format pooled jobs
   const formattedPools = pools.map((p) => {
@@ -65,6 +47,7 @@ export const getMyAssignedJobs = asyncHandler(async (req, res) => {
       _id: p._id,
       jobType: 'pool',
       status: p.status,
+      poolScope: p.poolScope,
       specificService: p.specificService,
       serviceCategory: p.serviceCategoryId,
       zone: p.zoneId,
@@ -106,12 +89,19 @@ export const getMyAssignedJobs = asyncHandler(async (req, res) => {
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
   );
 
-  const paginated = allJobs.slice(skip, skip + limit);
-  const total = allJobs.length;
+  const counts = { all: allJobs.length };
+  for (const job of allJobs) counts[job.status] = (counts[job.status] || 0) + 1;
+  const query = String(req.query.q || '').trim().toLowerCase();
+  const matches = allJobs.filter(job => (!typeFilter || job.jobType === typeFilter) &&
+    (!statusFilter || job.status === statusFilter) && (!query || [job._id, job.specificService, job.serviceCategory?.name,
+      job.zone?.name, job.customer?.name, job.customer?.phone, job.addressText].some(value => String(value || '').toLowerCase().includes(query))));
+  const total = matches.length;
+  const paginated = matches.slice(skip, skip + limit);
 
   return sendSuccess(res, {
     data: paginated,
     meta: {
+      counts,
       pagination: {
         page,
         limit,
@@ -138,7 +128,7 @@ export const getMyAssignedJobById = asyncHandler(async (req, res) => {
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name email phone')
-    .populate('members.bookingId', 'addressText location notes timeWindow status');
+    .populate('members.bookingId', 'addressText location notes timeWindow status estimatedPrice stopSequence');
 
   if (pool) {
     if (String(pool.assignedTechnicianId) !== String(req.user._id)) {
@@ -151,7 +141,8 @@ export const getMyAssignedJobById = asyncHandler(async (req, res) => {
         const booking = m.bookingId || {};
         const customer = m.customerId || {};
         return {
-          memberIndex: idx + 1,
+          memberIndex: booking.stopSequence || idx + 1,
+          earned: booking.status === 'completed' ? booking.estimatedPrice : 0,
           bookingId: booking._id || m.bookingId,
           customer: {
             _id: customer._id,
@@ -742,6 +733,6 @@ export const getOptimizedRouteForJob = asyncHandler(async (req, res) => {
     overrideLocation = parseGeoInput({ lat: req.query.lat, lng: req.query.lng });
   }
 
-  const route = await getTechnicianJobRoute(req.user._id, id, { overrideLocation });
+  const route = await getTechnicianJobRoute(req.user._id, id, { overrideLocation, replan: req.method === 'POST' });
   return sendSuccess(res, { data: route });
 });

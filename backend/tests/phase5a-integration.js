@@ -967,16 +967,16 @@ describe('Phase 5A Real Replica Set Integration: Assignment, Lifecycle, Availabi
       assert.equal(route.totalServiceDuration.unit, 'minutes');
       assert.equal(route.totalTripDuration.unit, 'minutes');
 
-      // Verify routeOrder was persisted to the pool document in DB
-      const poolInDb = await ServicePool.findById(routePool._id);
-      assert.ok(poolInDb.routeOrder && poolInDb.routeOrder.length === 2);
-      assert.equal(poolInDb.routeOrder[0].sequenceIndex, 1);
+      assert.equal((await ServicePool.findById(routePool._id)).routeOrder.length, 0);
+      assert.ok(!(await Booking.findById(bA._id)).stopSequence);
+      await ServicePool.updateOne({ _id: routePool._id }, { status: 'accepted' });
+      const replanned = await requestApp('POST', `/api/v1/technicians/me/jobs/${routePool._id}/replan`, {
+        headers: { authorization: `Bearer ${techAToken}` }, body: {},
+      });
+      assert.equal(replanned.statusCode, 200);
+      assert.equal((await ServicePool.findById(routePool._id)).routeOrder.length, 2);
+      assert.equal((await Booking.findById(bA._id)).stopSequence, 1);
 
-      // Verify member bookings had stopSequence synchronized
-      const bAInDb = await Booking.findById(bA._id);
-      assert.equal(bAInDb.stopSequence, 1);
-      const bBInDb = await Booking.findById(bB._id);
-      assert.equal(bBInDb.stopSequence, 2);
     });
 
     it('rejects Technician B attempting to get route for Technician A pool with 403', async () => {

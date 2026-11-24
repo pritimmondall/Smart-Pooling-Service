@@ -1,3 +1,4 @@
+import { executionMembers } from './executionMembers.js';
 import mongoose from 'mongoose';
 import {
   ServicePool,
@@ -76,7 +77,7 @@ export async function getJobStops(technicianUserId, jobId) {
     .populate('serviceCategoryId', 'name slug estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name email phone')
-    .populate('members.bookingId', 'addressText location timeWindow status stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason')
+    .populate('members.bookingId', 'addressText location timeWindow status poolId stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason')
     .lean();
 
   if (pool) {
@@ -91,7 +92,7 @@ export async function getJobStops(technicianUserId, jobId) {
       }
     }
 
-    const activeMembers = pool.members || [];
+    const activeMembers = executionMembers(pool);
     const stops = activeMembers
       .map((m, idx) => {
         const b = m.bookingId || {};
@@ -310,8 +311,8 @@ export async function transitionStopStatus(
         }
 
         // Fetch all member bookings to evaluate ordering and progression
-        const memberBookingIds = pool.members.map((m) => m.bookingId);
-        const allBookings = await Booking.find({ _id: { $in: memberBookingIds } }).session(session);
+        const historicalIds = pool.members.map((m) => m.bookingId);
+        const allBookings = await Booking.find({ _id: { $in: historicalIds } }).session(session);
         const bookingMap = new Map();
         for (const b of allBookings) {
           bookingMap.set(String(b._id), b);
@@ -325,7 +326,9 @@ export async function transitionStopStatus(
           }
         }
 
-        const sortedStops = pool.members
+        const members = executionMembers(pool, bookingMap);
+        const memberBookingIds = members.map(m => m.bookingId);
+        const sortedStops = members
           .map((m, idx) => {
             const b = bookingMap.get(String(m.bookingId));
             const seq = orderMap.get(String(m.bookingId)) ?? (b?.stopSequence > 0 ? b.stopSequence : idx + 1);
@@ -536,7 +539,7 @@ export async function transitionStopStatus(
 
         // Synchronize pool member status if cancelled
         if (targetStatus === 'cancelled') {
-          const poolMember = pool.members.find((m) => String(m.bookingId) === String(stopObjectId));
+          const poolMember = members.find((m) => String(m.bookingId) === String(stopObjectId));
           if (poolMember) {
             poolMember.status = 'cancelled';
           }

@@ -1,4 +1,6 @@
+import { executionMembers } from './executionMembers.js';
 import { planSharedGeometry } from '../routing/customerRoute.service.js';
+import { runInTransaction } from '../../config/db.js';
 import mongoose from 'mongoose';
 import { TechnicianProfile, ServicePool, Booking } from '../../models/index.js';
 import { AppError } from '../../utils/appError.js';
@@ -77,7 +79,7 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name phone')
-    .populate('members.bookingId', 'addressText location timeWindow status stopSequence')
+    .populate('members.bookingId', 'addressText location timeWindow status poolId stopSequence')
     .sort({ 'aggregateTimeWindow.start': 1 })
     .lean();
 
@@ -96,10 +98,8 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
   // Format pool routes
   const poolRoutes = pools.map((pool) => {
     // Only include active members with unfinished bookings as route stops
-    const activeMembers = (pool.members || []).filter((m) => {
-      const b = m.bookingId || {};
-      return m.status === 'active' && !['completed', 'cancelled'].includes(b.status);
-    });
+    const members = executionMembers(pool);
+    const activeMembers = members.filter(m => m.status === 'active' && m.bookingId && !['completed', 'cancelled'].includes(m.bookingId.status));
 
     // Create a map of saved routeOrder if present
     const orderMap = new Map();
@@ -111,11 +111,11 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
 
     // Sequence stops: prefer saved routeOrder sequenceIndex, then stopSequence on booking, then joinedAt order
     const stops = activeMembers
-      .map((m, idx) => {
+      .map(m => {
         const b = m.bookingId || {};
         const c = m.customerId || {};
         const savedOrder = orderMap.get(String(b._id || m.bookingId));
-        const sequenceIndex = savedOrder?.sequenceIndex ?? (b.stopSequence > 0 ? b.stopSequence : idx + 1);
+        const sequenceIndex = savedOrder?.sequenceIndex ?? (b.stopSequence > 0 ? b.stopSequence : members.indexOf(m) + 1);
 
         return {
           sequenceIndex,
@@ -200,7 +200,7 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
  * @param {Object} [options.overrideLocation] Optional coordinates from query params
  * @returns {Promise<Object>}
  */
-export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideLocation } = {}) {
+export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideLocation, replan = false } = {}) {
   if (!mongoose.isValidObjectId(technicianUserId)) {
     throw new AppError(400, 'Invalid technician ID format.', 'INVALID_ID');
   }
@@ -232,14 +232,12 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name phone')
-    .populate('members.bookingId', 'addressText location timeWindow notes status stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason');
+    .populate('members.bookingId', 'addressText location timeWindow notes status poolId stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason');
 
   if (pool) {
     // Partition members: only active members with unfinished bookings are eligible for new route optimization
-    const unfinishedMembers = (pool.members || []).filter((m) => {
-      const b = m.bookingId || {};
-      return m.status === 'active' && !['completed', 'cancelled'].includes(b.status);
-    });
+    const members = executionMembers(pool);
+    const unfinishedMembers = members.filter(m => m.status === 'active' && m.bookingId && !['completed', 'cancelled'].includes(m.bookingId.status));
 
     const existingRouteMap = new Map();
     if (Array.isArray(pool.routeOrder)) {
@@ -256,10 +254,13 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
       .filter((ro) => !unfinishedBookingIdSet.has(String(ro.bookingId)))
       .map((ro) => (ro.toObject ? ro.toObject() : { ...ro }));
 
-    const maxFinishedSeq = preservedFinishedRouteItems.reduce(
-      (max, ro) => Math.max(max, ro.sequenceIndex || 0),
-      0
-    );
+    if (replan && (pool.poolScope || !['accepted', 'in_progress'].includes(pool.status))) {
+      throw new AppError(409, 'Only accepted automatic pools can be replanned.', 'REPLAN_UNAVAILABLE');
+    }
+    const sequence = member => existingRouteMap.get(String(member.bookingId._id))?.sequenceIndex ||
+      member.bookingId.stopSequence || members.indexOf(member) + 1;
+    unfinishedMembers.sort((a, b) => sequence(a) - sequence(b));
+    const slots = unfinishedMembers.map(sequence);
 
     let optimized;
     if (unfinishedMembers.length === 0) {
@@ -293,21 +294,35 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
         };
       });
 
+      const current = unfinishedMembers.findIndex(m => ['arrived', 'in_progress'].includes(m.bookingId?.status));
+      const departure = replan ? new Date(Math.max(Date.now(), pool.aggregateTimeWindow.start.getTime())) : pool.aggregateTimeWindow.start;
+      if (replan && current >= 0 && current + 1 < unfinishedStops.length) {
+        const suffix = unfinishedStops.slice(current + 1);
+        const planned = await optimizePoolRoute({
+          technicianStartLocation: unfinishedStops[current].location, stops: suffix,
+          departureTime: new Date(+departure + unfinishedStops[current].estimatedDurationMins * 60000),
+        });
+        if (!planned.roadDistanceCalculated) throw new AppError(503, 'Routing provider unavailable.', 'REPLAN_UNAVAILABLE');
+        const byId = new Map(suffix.map(stop => [String(stop.bookingId), stop]));
+        unfinishedStops.splice(current + 1, suffix.length, ...planned.stops.map(stop => byId.get(String(stop.bookingId))));
+      }
       optimized = await optimizePoolRoute({
         technicianStartLocation: startLocation,
-        preserveOrder: Boolean(pool.poolScope),
+        preserveOrder: Boolean(pool.poolScope) || current >= 0 || (!replan && pool.status !== 'assigned'),
         stops: unfinishedStops,
-        departureTime: pool.aggregateTimeWindow.start,
+        departureTime: departure,
       });
 
-      // Adjust sequence indices of newly optimized unfinished stops to continue after finished stops
+      // Keep terminal visits in their original slots.
+      if (optimized.algorithm === 'booking_order' && !pool.poolScope) optimized.algorithm = 'saved_visit_order';
       optimized.stops = optimized.stops.map((s, idx) => ({
         ...s,
-        sequenceIndex: maxFinishedSeq + idx + 1,
+        sequenceIndex: slots[idx],
       }));
 
       // If road network calculation succeeded, merge newly calculated route estimates with existing persisted execution state
-      if (optimized.roadDistanceCalculated && optimized.stops.length > 0) {
+      if (replan && !optimized.roadDistanceCalculated) throw new AppError(503, 'Routing provider unavailable.', 'REPLAN_UNAVAILABLE');
+      if (replan && optimized.stops.length > 0) {
         const mergedUnfinishedItems = optimized.stops.map((s) => {
           const existing = existingRouteMap.get(String(s.bookingId));
           return {
@@ -332,13 +347,15 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
           .map(m => [String(m.bookingId._id), (m.bookingId.location || m.location)?.coordinates]));
         const points = mergedRouteOrder.map(s => locations.get(String(s.bookingId))).filter(Boolean);
         const sharedGeometry = await planSharedGeometry(points, optimized.provider, pool.sharedGeometry);
-        await ServicePool.findByIdAndUpdate(pool._id, { $set: { routeOrder: mergedRouteOrder, sharedGeometry } });
-
-        for (const stop of optimized.stops) {
-          if (stop.bookingId) {
-            await Booking.findByIdAndUpdate(stop.bookingId, { $set: { stopSequence: stop.sequenceIndex } });
-          }
-        }
+        await runInTransaction(async session => {
+          const update = await ServicePool.updateOne({
+            _id: pool._id, assignedTechnicianId: userObjectId, updatedAt: pool.updatedAt, status: pool.status,
+          }, { $set: { routeOrder: mergedRouteOrder, sharedGeometry } }, { session });
+          if (!update.matchedCount) throw new AppError(409, 'This route changed. Refresh and retry.', 'STALE_ROUTE');
+          await Booking.bulkWrite(optimized.stops.map(stop => ({ updateOne: {
+            filter: { _id: stop.bookingId }, update: { $set: { stopSequence: stop.sequenceIndex } },
+          } })), { session });
+        }, { requireTransaction: true });
       }
     }
 
@@ -369,6 +386,7 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
     .populate('zoneId', 'name code city');
 
   if (booking) {
+    if (replan) throw new AppError(409, 'Individual jobs have one visit.', 'REPLAN_UNAVAILABLE');
     const singleStopRoute = await optimizePoolRoute({
       technicianStartLocation: startLocation,
       stops: [

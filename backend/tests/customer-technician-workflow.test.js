@@ -82,16 +82,29 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   const opportunities = (await request(tech, '/technicians/me/opportunities')).data;
   assert.equal(opportunities[0].id, poolId);
   assert.equal(opportunities[0].total, 1080);
+  assert.ok(opportunities[0].estimate.hourlyRate > 0);
+  assert.ok(opportunities[0].estimate.travelMinutes > 0);
   await request(tech, `/technicians/me/opportunities/${poolId}/claim`, 'POST', {kind: 'pool'});
   assert.equal((await ServicePool.findById(poolId)).status, 'assigned');
   await request(tech, `/technicians/me/jobs/${poolId}/accept`, 'POST', {});
   const accepted = await ServicePool.findById(poolId);
   assert.equal(accepted.routeOrder.length, 2);
+  const stops = (await request(tech, `/technicians/me/jobs/${poolId}/stops`)).data.stops;
+  assert.deepEqual(stops.map(s => s.bookingId), accepted.routeOrder.map(s => String(s.bookingId)));
   const laterCustomer = String(accepted.routeOrder[1].bookingId) === first._id ? owner : neighbor;
   assert.equal((await request(laterCustomer, '/bookings/dashboard')).data.visitsAhead, 1);
   for (const [index, stop] of accepted.routeOrder.entries()) {
     for (const action of ['arrive', 'start', 'complete']) {
       await request(tech, `/technicians/me/jobs/${poolId}/stops/${stop.bookingId}/${action}`, 'POST', {});
+      if (index === 0 && action === 'arrive') {
+        const before = await ServicePool.findById(poolId).lean();
+        await request(tech, `/technicians/me/jobs/${poolId}/route?lat=22.523&lng=88.365`);
+        assert.deepEqual((await ServicePool.findById(poolId)).updatedAt, before.updatedAt);
+        await request(tech, `/technicians/me/jobs/${poolId}/replan`, 'POST', {});
+        const replanned = await ServicePool.findById(poolId);
+        assert.equal(String(replanned.routeOrder[0].bookingId), String(stop.bookingId));
+        assert.deepEqual(replanned.routeOrder[0].actualArrival, before.routeOrder[0].actualArrival);
+      }
     }
     if (!index) assert.equal((await request(laterCustomer, '/bookings/dashboard')).data.visitsAhead, 0);
   }
@@ -101,6 +114,10 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
   assert.equal((await request(owner, `/bookings/${first._id}/rating`)).data.rating, 5);
   const earnings = (await request(tech, '/technicians/me/earnings')).data;
   assert.equal(earnings.completedServices, 2);
+  assert.equal(earnings.todayPaise, 108000);
+  const matches = await request(tech, `/technicians/me/jobs?q=${poolId}&limit=1&status=completed`);
+  assert.equal(matches.data[0]._id, poolId);
+  assert.equal(matches.meta.counts.completed, 1);
   assert.equal(earnings.incentivePaise, 0);
   assert.equal(earnings.servicePaise, 108000);
   for (let i = 0; i < 5; i++) await request(owner, '/bookings', 'POST', { ...payload, bookingMode: 'individual' }, 201);
@@ -177,7 +194,9 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
           serviceCategories: [plumbing._id], baseLocation: { lat: 28.61, lng: 77.21 }, serviceRadiusKm: 1,
         });
         const available = (await request(tech, '/technicians/me/opportunities')).data;
-        assert.ok(available.find(job => job.id === poolId)?.distanceKm > 1000);
+        assert.equal(available.some(job => job.id === poolId), false);
+        await request(tech, `/technicians/me/opportunities/${poolId}/claim`, 'POST', {kind:'pool'}, 409);
+        await request(tech, '/technicians/me/profile', 'PATCH', { baseLocation: near });
         await runPoolLockSweep({dispatch:true});
         assert.ok((await request(tech,'/notifications/my')).data.some(n=>n.type==='opportunity' && n.relatedEntityId===poolId));
         await request(tech, `/technicians/me/opportunities/${poolId}/claim`, 'POST', {kind:'pool'});

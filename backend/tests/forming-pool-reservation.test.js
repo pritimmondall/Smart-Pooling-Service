@@ -35,7 +35,7 @@ test('technician reserves a forming pool while customers keep joining, then rece
   for (const tech of [technician, otherTechnician]) {
     await TechnicianProfile.create({ userId: tech._id, serviceCategories: [category._id],
       approvalStatus: 'approved', availabilityStatus: 'available',
-      baseLocation: { type: 'Point', coordinates: [77.21, 28.61] } });
+      baseLocation: { type: 'Point', coordinates: [88.36, 22.52] } });
   }
 
   const booking = (await request(owner, '/bookings', 'POST', {

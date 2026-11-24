@@ -113,11 +113,17 @@ test('three customers see a private visit sequence, follow the technician throug
   }
   await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 each'));
   const tech = await login(accounts[3]);
+  await tech.waitForFunction(() => document.body.innerText.includes('/hour estimated gross'));
   await click(tech, 'Claim job');
   for (const page of customers) {
     assert.equal(await page.$('[aria-label="Visit route"]'), null);
   }
   await click(tech, 'Accept');
+  await tech.waitForFunction(() => document.querySelectorAll('.visit-pin').length === 3);
+  await tech.waitForSelector('a[href*="maps/dir/"]');
+  await click(tech, 'Report visit issue');
+  await tech.waitForFunction(() => document.body.innerText.includes('Other visits in this pool will continue.'));
+  await tech.keyboard.press('Escape');
   await customers[0].waitForFunction(() => document.body.innerText.includes('Technician · Technician') && document.body.innerText.includes('Estimated visit ·') && /visit before yours|Your visit is next/.test(document.body.innerText));
   const byVisit = new Map();
   for (const [index, page] of customers.entries()) {

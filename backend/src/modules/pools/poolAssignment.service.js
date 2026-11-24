@@ -78,6 +78,12 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
     ? haversineDistanceKm(profile.baseLocation, pool.centroidLocation)
     : Infinity;
 
+  const radius = profile.serviceRadiusKm ?? 10;
+  if (distanceKm > radius || (pool.members || []).some(member => member.status === 'active' && member.location &&
+      haversineDistanceKm(profile.baseLocation, member.location) > radius)) {
+    reasons.push(`Pool is outside your ${radius} km service radius.`);
+  }
+
   // 6. Workload & Capacity check
   const activeStatusFilter = { $in: ['assigned', 'accepted', 'arrived', 'in_progress'] };
 

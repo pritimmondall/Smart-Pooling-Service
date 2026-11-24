@@ -14,26 +14,29 @@ import { asyncHandler } from '../../utils/asyncHandler.js';
 import { parseGeoInput } from '../../utils/geo.js';
 import { parsePagination } from '../../utils/pagination.js';
 import { sendSuccess } from '../../utils/response.js';
-import { getTechnicianDashboardMetrics } from './technicianMetrics.service.js';
+import { getDateBoundaries, getTechnicianDashboardMetrics } from './technicianMetrics.service.js';
 
 /**
  * Fetches the authenticated technician's dashboard metrics.
  * Derived strictly from authenticated request user context (req.user._id).
  */
 export const getMyEarnings = asyncHandler(async (req, res) => {
+  const { startOfDay, endOfDay } = getDateBoundaries(new Date(), req.query.timezone);
   const [totals] = await Booking.aggregate([
     { $match: { technicianId: req.user._id, status: 'completed' } },
     { $project: {
+      completedAt: 1,
       fare: { $round: [{ $multiply: ['$estimatedPrice', 100] }, 0] },
     } },
     { $group: {
       _id: null, completedServices: { $sum: 1 },
       servicePaise: { $sum: '$fare' },
+      todayPaise: { $sum: { $cond: [{ $and: [{ $gte: ['$completedAt', startOfDay] }, { $lt: ['$completedAt', endOfDay] }] }, '$fare', 0] } },
     } },
   ]);
   const { completedServices = 0, servicePaise = 0, incentivePaise = 0 } = totals || {};
   return sendSuccess(res, { data: { completedServices, servicePaise, incentivePaise,
-    totalPaise: servicePaise + incentivePaise } });
+    todayPaise: totals?.todayPaise || 0, totalPaise: servicePaise + incentivePaise } });
 });
 
 export const getMyTechnicianMetrics = asyncHandler(async (req, res) => {
