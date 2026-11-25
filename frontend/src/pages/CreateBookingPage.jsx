@@ -1,189 +1,109 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { servicesApi, bookingsApi, userApi } from '../api/client.js';
+import React, { useState, useEffect, useRef } from 'react';
+import { LocateFixed, MapPin } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
-import useNearbyPools from '../components/common/useNearbyPools.js';
 
-import TimeShiftOffer from '../components/common/TimeShiftOffer.jsx';
-import ClosingPriceLimit from '../components/common/ClosingPriceLimit.jsx';
+import { useSearchParams } from 'react-router-dom';
+import DashboardPoolMatcher from '../components/common/DashboardPoolMatcher.jsx';
 
-const panel = 'glass-panel rounded-3xl p-6 space-y-4';
-const input = 'glass-input w-full';
-function initialTime(value, offset) {
-  if (value && Number.isFinite(Date.parse(value))) return localInput(new Date(value));
-  return localInput(new Date(Date.now() + offset));
-}
+import './CustomerDashboard.css';
 
-function localInput(date) {
-  return new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
-}
+const fallbackLocation = { lat: 22.5015, lng: 88.3531 };
 
 export default function CreateBookingPage() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
+  const { user, syncContactProfile, updateProfile } = useAuth();
   const [params] = useSearchParams();
-  const invited = params.get('poolId');
-  const invitedLat = Number(params.get('lat'));
-  const invitedLng = Number(params.get('lng'));
-  const invitedLocation = params.has('lat') && params.has('lng') && Number.isFinite(invitedLat) && Number.isFinite(invitedLng)
-    && Math.abs(invitedLat) <= 90 && Math.abs(invitedLng) <= 180
-    ? { lat: invitedLat, lng: invitedLng } : null;
-  const [catalog, setCatalog] = useState([]);
-  const [scopes, setScopes] = useState({});
-  const [domain, setDomain] = useState('');
-  const [specific, setSpecific] = useState('');
-  const [mode, setMode] = useState(!invited && params.get('mode') === 'individual' ? 'individual' : invited || params.get('mode') === 'pool' ? 'pool' : 'automatic');
-  const [scope, setScope] = useState('200m');
-  const [building, setBuilding] = useState('');
-  const [choice, setChoice] = useState('');
-  const targetId = invited || choice;
   const saved = user?.poolAlertLocation?.coordinates;
-  const [coords, setCoords] = useState(invitedLocation || { lat: saved?.[1] ?? 22.5015, lng: saved?.[0] ?? 88.3531 });
-  const locationEdited = useRef(Boolean(invitedLocation));
+  const [location, setLocation] = useState(() => saved ? { lat: saved[1], lng: saved[0] } : null);
+  const [editingLocation, setEditingLocation] = useState(false);
+  const picked = useRef(false);
+  const [pinAddress, setPinAddress] = useState('');
+  const chooseLocation = point => { setPinAddress(''); picked.current = true; setLocation(point); };
   useEffect(() => {
-    if (saved) return;
-    let active = true;
-    userApi.getProfile().then(res => {
-      const point = res.data?.poolAlertLocation?.coordinates;
-      if (active && point && !locationEdited.current) {
-        setCoords({ lat: point[1], lng: point[0] });
-        setPinConfirmed(true);
+    if (saved) {
+      if (!picked.current) {
+        setLocation({ lat: saved[1], lng: saved[0] });
+        setEditingLocation(false);
       }
-    }).catch(() => {});
-    return () => { active = false; };
-  }, [saved]);
+    } else {
+      syncContactProfile().catch(() => {});
+    }
+  }, [saved, syncContactProfile]);
+  const [savingPin, setSavingPin] = useState(false);
   const [address, setAddress] = useState('');
-  const [limit, setLimit] = useState('');
-  const [notes, setNotes] = useState('');
   const [finding, setFinding] = useState(false);
-  const [pinConfirmed, setPinConfirmed] = useState(Boolean(invitedLocation || saved));
+  const [locating, setLocating] = useState(false);
   const [lookup, setLookup] = useState('');
-  const [start, setStart] = useState(() => initialTime(params.get('start'), 86400000));
-  const [end, setEnd] = useState(() => initialTime(params.get('end'), 100800000));
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    servicesApi.listActive().then(res => {
-      if (!active) return;
-      setCatalog(res.data);
-      setScopes(res.meta.poolScopes);
-      const initial = res.data.find(s => s._id === params.get('serviceId'));
-      if (initial) { setDomain(initial.domain); setSpecific(initial.services.includes(params.get('service')) ? params.get('service') : initial.services[0]); }
-    }).catch(err => active && setError(err.message));
-    return () => { active = false; };
-  }, [params]);
+  async function savePin() {
+    setSavingPin(true);
+    try {
+      await updateProfile({ poolAlertLocation: location });
+      setLookup('Service location saved.');
+    } catch (err) { setLookup(err.message || 'Could not save your location.'); }
+    finally { setSavingPin(false); }
+  }
 
-  const category = catalog.find(c => c.domain === domain && c.services.includes(specific));
-  const nearby = useNearbyPools(!pinConfirmed || mode !== 'pool' || (!invited && !category) ? null :
-    { ...coords, ...(invited ? { poolId: invited } : { serviceCategoryId: category._id, specificService: specific }) });
-  const target = nearby.items?.find(p => p.id === targetId && p.canJoinFromLocation !== false);
-  const needsBuilding = mode === 'pool' && (targetId ? target?.scope : scope) === 'building';
-  const automatic = mode === 'automatic';
-  const quoteKey = JSON.stringify([mode, category?._id, specific, coords.lat, coords.lng, start, end]);
-  const [preview, setPreview] = useState(null);
-  const quote = preview?.key === quoteKey ? preview.data : null;
-  const [acceptShift, setAcceptShift] = useState(false);
-  const offer = acceptShift && quote?.shiftOffer;
-  const individual = mode === 'individual';
   async function findAddress() {
-    setFinding(true); setLookup('');
+    setFinding(true);
+    setLookup('');
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?${new URLSearchParams({ q: address, format: 'jsonv2', limit: 1 })}`);
-      if (!res.ok) throw new Error();
-      const [place] = await res.json();
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?${new URLSearchParams({ q: address, format: 'jsonv2', limit: 1 })}`);
+      if (!response.ok) throw new Error();
+      const [place] = await response.json();
       if (!place) throw new Error();
-      locationEdited.current = true;
-      setCoords({ lat: +place.lat, lng: +place.lon });
-      setPinConfirmed(true);
-      setLookup(place.display_name + ' · © OpenStreetMap contributors');
-    } catch { setLookup('Address lookup failed. Choose the service location on the map.'); }
-    finally { setFinding(false); }
-  }
-  async function submit(e) {
-    e.preventDefault(); setError('');
-    if (busy || (!category && !target) || (targetId && !target)) return;
-    if (!pinConfirmed) {
-      setError('Find the address on the map or select the service entrance before booking.'); return;
+      chooseLocation({ lat: Number(place.lat), lng: Number(place.lon) });
+      setPinAddress(address.trim());
+      setLookup(`${place.display_name} · © OpenStreetMap contributors`);
+    } catch {
+      setLookup('Address lookup failed. Choose the location on the map instead.');
+    } finally {
+      setFinding(false);
     }
-    if ((individual || automatic) && !(new Date(start) > new Date() && new Date(end) > new Date(start))) {
-      setError('Choose a future start and a later end time.'); return;
-    }
-    setBusy(true);
-    try {
-      if (automatic && !quote) {
-        setAcceptShift(false);
-        const result = await bookingsApi.quote({ automaticDispatch: true,
-          serviceCategoryId: category._id, specificService: specific, location: coords,
-          timeWindow: { start: new Date(start), end: new Date(end) },
-        });
-        setPreview({ key: quoteKey, data: result.data });
-        return;
-      }
-      const res = await bookingsApi.create({
-        serviceCategoryId: target?.serviceCategoryId || category._id, specificService: target?.specificService || specific,
-        bookingMode: automatic ? 'pool' : mode, location: coords, addressText: address.trim() || `Map pin ${coords.lat}, ${coords.lng}`,
-        ...(!individual && limit && { closingPriceLimit: Number(limit) }),
-        ...(invited && params.get('watch') === '1' && { watchWindow: { start: new Date(Math.max(Date.now() + 60000, Date.parse(params.get('start')))), end: params.get('end') } }),
-        notes, ...(automatic && { automaticDispatch: true, quotedPrice: offer ? offer.price : quote.finalPricePerMember, ...(offer && { acceptShift: offer }) }), ...(individual || automatic ? { timeWindow: { start: new Date(start), end: new Date(end) } } :
-          { ...(targetId ? { targetPoolId: targetId, quotedPrice: target.price } : { poolScope: scope }), ...(needsBuilding && { building }) }),
-      });
-      navigate(`/bookings/${res.data._id}`, { state: { flashMessage: res.message } });
-    } catch (err) { setPreview(null); setError(err.message); } finally { setBusy(false); }
   }
 
-  const submitLabel = individual ? 'Book individual visit'
-    : automatic ? (quote ? 'Confirm pooled booking' : 'Check matching price')
-    : targetId ? 'Join pool' : 'Create pool';
+  function useCurrentLocation() {
+    if (!navigator.geolocation) {
+      setLookup('This browser cannot provide your current location. Choose it on the map.');
+      return;
+    }
+    setLocating(true);
+    setLookup('');
+    navigator.geolocation.getCurrentPosition(position => {
+      chooseLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+      setLocating(false);
+      setLookup('Searching from your current location.');
+    }, () => {
+      setLocating(false);
+      setLookup('Location access was unavailable. Choose your location on the map.');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  }
 
-  return <form onSubmit={submit} className="max-w-3xl mx-auto space-y-5">
-    <h1 className="text-2xl font-bold">{invited ? 'Join a nearby pool' : 'Book a service'}</h1>
-    {!invited && <section className={panel}>
-      <label className="block">Service domain<select className={input} required value={domain} onChange={e => {setDomain(e.target.value); setSpecific(''); setChoice('');}}>
-        <option value="">Choose domain</option>{[...new Set(catalog.map(c=>c.domain))].map(d=><option key={d}>{d}</option>)}</select></label>
-      {domain && <label className="block">Specific service<select className={input} required value={specific} onChange={e=>{setSpecific(e.target.value); setChoice('');}}>
-        <option value="">Choose service</option>{catalog.filter(c=>c.domain===domain).flatMap(c=>c.services.map(s=><option key={c._id+s}>{s}</option>))}</select></label>}
-      {category && <label className="block">Booking type<select className={input} value={mode} onChange={e=>{setMode(e.target.value); setChoice('');}}>
-        <option value="automatic">Automatically match my preferred time</option><option value="pool">Create or join a pool</option><option value="individual">Individual booking</option></select></label>}
-    </section>}
-    {(category || invited) && <>
-      <section className={panel}>
-        <h2 className="font-bold text-lg">Service location</h2>
-        <label className="block">Street address or landmark<input className={input} value={address} maxLength={300} onChange={e=>{locationEdited.current = true; setAddress(e.target.value); setPinConfirmed(false); setLookup('');}} /></label>
-        <button type="button" className="glass-button-secondary px-4 py-2" disabled={!address.trim() || finding} onClick={findAddress}>{finding?'Searching…':'Find address on map'}</button>
-        {lookup && <p role="status">{lookup}</p>}
-        <p className="text-sm">Confirm the pin at your service entrance. You can also enter coordinates below.</p>
-        <LocationPickerMap value={coords} onChange={point=>{locationEdited.current = true; setCoords(point); setPinConfirmed(true); setLookup('');}}/>
-      </section>
-      <section className={panel}>
-        {individual || automatic ? <>
-          <label className="block">Preferred start<input className={input} type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></label>
-          <label className="block">Preferred end<input className={input} type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></label>
-        </> : <>
-          {!invited && Boolean(nearby.items?.length || choice) && <label className="block">Available pools<select className={input} value={choice} onChange={e=>setChoice(e.target.value)}>
-            <option value="">Create my own pool</option>{nearby.items?.filter(p => p.canJoinFromLocation !== false).map(p=><option key={p.id} value={p.id}>{p.area} · {p.distanceMeters} m away · ₹{p.price} each</option>)}</select></label>}
-          {targetId ? <div aria-live="polite">{target ? <><strong>{target.name}</strong><p>{target.area} · {target.members}/{target.capacity} booked · ₹{target.price} after joining</p><p>Service starts from {new Date(target.start).toLocaleString()}.</p></> : !pinConfirmed ? 'Choose your service location to check this pool.' : nearby.loading ? 'Checking pool…' : 'Pool unavailable to join at this location.'}</div> :
-            <label className="block">Who can join?<select className={input} value={scope} onChange={e=>setScope(e.target.value)}>{Object.entries(scopes).map(([k,s])=><option key={k} value={k}>{s.label} · up to {s.capacity} people</option>)}</select></label>}
-          {needsBuilding && <label className="block">Building or apartment block name<input className={input} required maxLength={160} value={building} onChange={e=>setBuilding(e.target.value)} placeholder="Building name and block, without flat number"/></label>}
-          <p className="text-sm">Pool visits follow booking order. The pool closes when full or after 30 minutes.</p>
-          {nearby.error && <p role="alert">{nearby.error}</p>}
-        </>}
-        <label className="block">Visit instructions (optional)<input className={input} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)}/></label>
-      </section>
-      <div className={panel}>
-        <p className="font-semibold">₹{(offer ? offer.price : quote?.finalPricePerMember) ?? target?.price ?? category?.baseIndividualPrice} {automatic && !quote ? 'individual price' : 'per person'}</p>
-        {quote && <TimeShiftOffer offer={quote.shiftOffer} accepted={acceptShift} onChange={setAcceptShift}/>}
-        {quote && !offer && <p role="status">{quote.memberCount === 1 ? 'Your booking would start a new pool.' :
-          `Matching pool · ${quote.memberCount} members including you · save ₹${quote.totalSavingsPerMember} each (${quote.discountPercentage}%)`}</p>}
-        {quote?.recommendedMatch && <p className="text-sm">Pool centre {quote.recommendedMatch.distanceMeters} m away · {quote.recommendedMatch.overlapMinutes} minutes of shared availability</p>}
-        {!individual && !targetId && <p className="text-sm">SmartPool groups nearby visits and assigns an available technician when the pool closes. The group rate depends on the final number of bookings.</p>}
-        {!individual && <ClosingPriceLimit value={limit} onChange={setLimit}/>}
-        <button disabled={busy || finding || (!category && !target) || Boolean(targetId && !target)} className="glass-button-primary px-5 py-3">
-          {busy ? 'Please wait…' : submitLabel}</button>
+  return <div className="pool-home">
+    <header className="visit-heading"><h1>Book a home visit</h1><p>Choose your service, address and preferred time. We’ll arrange the technician.</p></header>
+    <DashboardPoolMatcher location={location} params={params} address={pinAddress}>
+      <div className="pool-location">
+        <MapPin aria-hidden="true" size={18}/><div>
+        <strong>Service location</strong>
+        <p>{location ? `${saved && location.lat === saved[1] && location.lng === saved[0] ? 'Saved pin' : 'Selected pin'} · ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}` : 'Choose where you need service'}</p></div>
+        <button type="button" aria-expanded={editingLocation} className="pool-location-edit" onClick={() => setEditingLocation(open => !open)}>
+          {editingLocation ? 'Done' : location ? 'Change' : 'Choose location'}
+        </button>
+
       </div>
-    </>}
-    {error && <p role="alert" className="text-rose-700">{error}</p>}
-  </form>;
+      {!editingLocation && lookup && <p role="status" className="text-sm">{lookup}</p>}
+      {editingLocation && <div className="space-y-3 border rounded-xl p-4">
+        <button type="button" className="pool-current" disabled={locating} onClick={useCurrentLocation}><LocateFixed size={16}/>{locating ? 'Finding your location…' : 'Use my current location'}</button>
+        <label className="block text-sm font-medium">Street address or landmark
+          <input className="glass-input w-full mt-1" value={address} onChange={event => setAddress(event.target.value)} maxLength={300} placeholder="Search for a service location" />
+        </label>
+        <button type="button" className="glass-button-secondary px-4 py-2" disabled={!address.trim() || finding} onClick={findAddress}>{finding ? 'Searching…' : 'Find address on map'}</button>
+        {lookup && <p role="status" className="text-sm">{lookup}</p>}
+        <LocationPickerMap value={location || fallbackLocation} onChange={chooseLocation} height="260px" />
+        {location && (location.lat !== saved?.[1] || location.lng !== saved?.[0]) && <button type="button"
+          className="glass-button-secondary" disabled={savingPin} onClick={savePin}>{savingPin ? 'Saving…' : 'Save location'}</button>}
+        {saved && <button type="button" className="text-sm text-emerald-700 underline" onClick={() => chooseLocation({ lat: saved[1], lng: saved[0] })}>Use saved location</button>}
+      </div>}
+    </DashboardPoolMatcher>
+  </div>;
 }

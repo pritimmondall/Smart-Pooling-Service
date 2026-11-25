@@ -130,8 +130,8 @@ export default function ProfilePage() {
           </div>
 
           {user?.role === 'customer' && <section className="space-y-2">
-            <h2 className="text-sm font-semibold">Nearby pool alerts</h2>
-            <p className="text-xs text-slate-600">Choose a location to receive invitations within 200 m, then save your changes. Your first booking sets this location if you leave it empty.</p>
+            <h2 className="text-sm font-semibold">Default service location</h2>
+            <p className="text-xs text-slate-600">Choose the address to use for future visits. You can change it when booking.</p>
             <LocationPickerMap value={alertLocation} onChange={setAlertLocation} height="220px" />
           </section>}
           <div className="pt-2">

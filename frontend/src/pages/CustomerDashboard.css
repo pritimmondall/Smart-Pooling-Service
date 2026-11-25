@@ -10,8 +10,17 @@
   gap: 1.2rem;
 }
 .pool-panel, .pool-booking { border-radius: 1.35rem; border: 1px solid var(--line); background: #fff; padding: clamp(1.1rem, 2vw, 1.65rem); box-shadow: 0 5px 18px #23453008; min-width: 0; }
-.pool-section-heading { display: flex; align-items: center; gap: .75rem; margin-bottom: 1.25rem; }
-.pool-section-heading h2 { font-size: 1.4rem; font-weight: 700; letter-spacing: -.045em; }
+.visit-heading h1 { font-size: clamp(1.85rem, 4vw, 2.8rem); font-weight: 650; line-height: 1.15; letter-spacing: -.045em; }
+.visit-heading p { margin-top: .5rem; color: var(--muted); }
+.visit-request { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 1.25rem; padding: clamp(1.25rem, 3vw, 2rem); border-radius: 1.25rem; background: #173f36; color: white; }
+.visit-request > svg { color: #c7e6c0; }
+.visit-request h2 { font-size: 1.45rem; font-weight: 650; }
+.visit-request p { margin-top: .4rem; color: #dceae1; font-size: .92rem; }
+.visit-request .pool-primary { background: #e0f2d5; color: #163c33; width: fit-content; }
+@media (max-width: 600px) {
+  .visit-request { grid-template-columns: auto 1fr; align-items: start; }
+  .visit-request a { grid-column: 2; }
+}
 .pool-location { display: flex; align-items: center; gap: .65rem; background: #f4f7f3; border-radius: .85rem; padding: .85rem; font-size: .83rem; margin-bottom: 1rem; }
 .pool-location > svg { flex-shrink: 0; }
 .pool-location p { color: var(--muted); font-size: .78rem; }

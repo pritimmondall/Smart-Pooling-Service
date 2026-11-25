@@ -1,4 +1,3 @@
-import PoolCutoffEditor from '../components/common/PoolCutoffEditor.jsx';
 import CompletionFeedback from '../components/common/CompletionFeedback.jsx';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -14,9 +13,8 @@ import {
   Trash2,
   Users,
   User,
-  ShieldCheck,
 } from 'lucide-react';
-import { bookingsApi, poolsApi } from '../api/client.js';
+import { bookingsApi } from '../api/client.js';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import LoadingSpinner from '../components/common/LoadingSpinner.jsx';
@@ -35,7 +33,7 @@ export default function BookingDetailPage() {
   const location = useLocation();
 
   const [booking, setBooking] = useState(null);
-  const [pool, setPool] = useState(null);
+  const pool = booking?.poolId;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(location.state?.flashMessage || null);
@@ -46,7 +44,6 @@ export default function BookingDetailPage() {
   const [editForm, setEditForm] = useState({
     addressText: '',
     notes: '',
-    bookingMode: 'pool',
     serviceDate: '',
     startTime: '',
     endTime: '',
@@ -66,17 +63,6 @@ export default function BookingDetailPage() {
       setBooking(data);
 
       if (data) {
-        const poolIdStr = typeof data.poolId === 'object' ? data.poolId?._id : data.poolId;
-        if (poolIdStr) {
-          try {
-            const poolRes = await poolsApi.getById(poolIdStr);
-            setPool(poolRes?.data || (typeof data.poolId === 'object' ? data.poolId : null));
-          } catch {
-            setPool(typeof data.poolId === 'object' ? data.poolId : null);
-          }
-        } else {
-          setPool(null);
-        }
         const start = data.timeWindow?.start ? new Date(data.timeWindow.start) : new Date();
         const end = data.timeWindow?.end ? new Date(data.timeWindow.end) : new Date();
         const lat = data.location?.coordinates?.[1] ?? 22.5015;
@@ -91,7 +77,6 @@ export default function BookingDetailPage() {
         setEditForm({
           addressText: data.addressText || '',
           notes: data.notes || '',
-          bookingMode: data.bookingMode || 'pool',
           serviceDate: localDateStr,
           startTime: localStartTime,
           endTime: localEndTime,
@@ -126,7 +111,6 @@ export default function BookingDetailPage() {
       await bookingsApi.update(id, {
         addressText: editForm.addressText.trim(),
         notes: editForm.notes.trim(),
-        bookingMode: editForm.bookingMode,
         timeWindow: {
           start: startDateTime.toISOString(),
           end: endDateTime.toISOString(),
@@ -378,193 +362,15 @@ export default function BookingDetailPage() {
       </div>
 
       {booking.status === 'completed' && <CompletionFeedback key={booking._id} booking={booking} />}
-      {/* Service Pool & Dynamic Pricing Card (Phase 4) */}
-      {booking.bookingMode === 'pool' && pool && (
-        <div className="glass-panel rounded-3xl p-6 sm:p-8 border border-emerald-200/80 bg-gradient-to-br from-emerald-50/40 via-white to-slate-50 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-emerald-100">
-            <div>
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  <Users className="w-3.5 h-3.5" />
-                  Service Pool Active
-                </span>
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wider ${
-                    pool.status === 'locked'
-                      ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                      : 'bg-amber-100 text-amber-800 border border-amber-200'
-                  }`}
-                >
-                  Status: {pool.status === 'forming' ? 'Forming (Open)' : pool.status}
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-1.5">
-                {pool.status === 'forming'
-                  ? `Nearby neighbors within ${pool.poolRadiusKm || 2} km can join this pool to unlock higher discount tiers.`
-                  : 'This pool is locked and confirmed. Technician dispatch will follow.'}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs text-slate-600 bg-white/80 px-3.5 py-2 rounded-2xl border border-slate-200 shadow-sm shrink-0">
-              <Clock className="w-4 h-4 text-emerald-600" />
-              <div>
-                <span className="font-semibold block text-slate-800">
-                  {pool.status === 'locked' ? 'Pool Finalized' : 'Lock Cutoff'}
-                </span>
-                <span className="text-[11px] text-slate-500 font-mono">
-                  {pool.lockCutoffTime
-                    ? `${new Date(pool.lockCutoffTime).toLocaleTimeString(undefined, {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })} (${new Date(pool.lockCutoffTime).toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                      })})`
-                    : 'Pending'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {pool.canEditCutoff && <PoolCutoffEditor key={pool._id} poolId={pool._id} cutoff={pool.lockCutoffTime}
-            serviceStart={pool.aggregateTimeWindow.start} onSaved={lockCutoffTime => setPool(current => ({ ...current, lockCutoffTime }))}/>}
-          {/* Capacity Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-700 flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-emerald-600" />
-                Pool Capacity & Formation
-              </span>
-              <span className="font-mono font-bold text-emerald-800">
-                {pool.members?.length || 1} / {pool.maxCapacity || 4} Members Joined
-              </span>
-            </div>
-            <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
-              <div
-                className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(
-                    100,
-                    (((pool.members?.length || 1) / (pool.maxCapacity || 4)) * 100)
-                  )}%`,
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Dynamic Pricing Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <span className="text-[11px] text-slate-400 uppercase font-semibold block">
-                Individual Base Rate
-              </span>
-              <span className="text-lg font-bold text-slate-800 mt-1 block">
-                ₹{pool.pricing?.individualBasePrice || service?.baseIndividualPrice || booking.estimatedPrice}
-              </span>
-              <span className="text-[10px] text-slate-400">Standard single service</span>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 shadow-xs">
-              <span className="text-[11px] text-emerald-800 uppercase font-semibold block">
-                Pool Discount
-              </span>
-              <span className="text-lg font-extrabold text-emerald-700 mt-1 block">
-                {pool.pricing?.discountPercentage || 0}% OFF
-              </span>
-              <span className="text-[10px] text-emerald-600">
-                Tier for {pool.pricing?.memberCount || 1} neighbor{(pool.pricing?.memberCount || 1) > 1 ? 's' : ''}
-              </span>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white border border-slate-200/80 shadow-xs">
-              <span className="text-[11px] text-slate-400 uppercase font-semibold block">
-                Your Payable Price
-              </span>
-              <span className="text-lg font-extrabold text-slate-900 mt-1 block">
-                ₹{booking.estimatedPrice}
-              </span>
-              <span className="text-[10px] text-emerald-600 font-medium">
-                {pool.status === 'locked' ? 'Confirmed price' : 'Estimated pooled rate'}
-              </span>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-emerald-600 text-white shadow-xs">
-              <span className="text-[11px] text-emerald-100 uppercase font-semibold block">
-                Your Direct Savings
-              </span>
-              <span className="text-lg font-extrabold mt-1 block">
-                ₹{((pool.pricing?.totalSavingsPaise || 0) / 100 + (booking.acceptedShift?.creditPaise || 0) / 100).toFixed(2)}
-              </span>
-              <span className="text-[10px] text-emerald-100">
-                Saved by pooling together
-              </span>
-            </div>
-          </div>
-
-          {/* Privacy-Preserving Co-Poolers List */}
-          <div className="space-y-3 pt-2">
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              Verified Co-Pool Members (Privacy Protected)
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {pool.members?.map((m, idx) => (
-                <div
-                  key={m._id || idx}
-                  className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${
-                    m.isCurrentUser
-                      ? 'bg-emerald-50/50 border-emerald-300 font-medium'
-                      : 'bg-white border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
-                        m.isCurrentUser ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
-                      }`}
-                    >
-                      {m.displayName ? m.displayName[0] : 'N'}
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-900 block">
-                        {m.displayName || 'Neighbor'} {m.isCurrentUser && '(You)'}
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        {m.isCurrentUser
-                          ? m.addressText || 'Your Address'
-                          : m.approximateAddress || 'Nearby Service Area'}
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {m.joinedAt
-                      ? new Date(m.joinedAt).toLocaleTimeString(undefined, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : ''}
-                  </span>
-                </div>
-              ))}
-
-              {/* Show open remaining slots */}
-              {Array.from({
-                length: Math.max(0, (pool.maxCapacity || 4) - (pool.members?.length || 1)),
-              }).map((_, i) => (
-                <div
-                  key={`slot-${i}`}
-                  className="p-3.5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 flex items-center gap-2.5 text-xs text-slate-400"
-                >
-                  <div className="w-8 h-8 rounded-full border border-dashed border-slate-300 flex items-center justify-center text-slate-300 font-bold">
-                    +
-                  </div>
-                  <span>Open slot for nearby neighbor</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {pool?.pricing && <section className="glass-panel rounded-3xl p-6">
+        <h2 className="font-semibold">Visit price</h2>
+        <dl className="mt-3 space-y-2 text-sm">
+          <div className="flex justify-between"><dt>Service rate</dt><dd>₹{pool.pricing.individualBasePrice}</dd></div>
+          <div className="flex justify-between"><dt>Shared visit discount ({pool.pricing.discountPercentage}%)</dt><dd>−₹{pool.pricing.totalSavingsPerMember}</dd></div>
+          {booking.acceptedShift?.acceptedAt && <div className="flex justify-between"><dt>Time change discount</dt><dd>−₹{(booking.acceptedShift.creditPaise / 100).toFixed(2)}</dd></div>}
+          <div className="flex justify-between border-t pt-2 font-semibold"><dt>{pool.status === 'forming' ? 'Estimated fare' : 'Visit fare'}</dt><dd>₹{booking.estimatedPrice}</dd></div>
+        </dl>
+      </section>}
 
       {/* Grid: Booking Specs & Map Location */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -712,19 +518,6 @@ export default function BookingDetailPage() {
                 className="glass-input w-full"
               />
             </div>
-          </div>
-
-          <div>
-            <label className="block font-semibold text-slate-700 mb-1">Dispatch Mode</label>
-            <select
-              disabled={Boolean(booking.specificService)}
-              value={editForm.bookingMode}
-              onChange={(e) => setEditForm({ ...editForm, bookingMode: e.target.value })}
-              className="glass-input w-full"
-            >
-              <option value="pool">Service Pool (Eco-friendly + Discount)</option>
-              <option value="individual">Dedicated Individual</option>
-            </select>
           </div>
 
           <div>

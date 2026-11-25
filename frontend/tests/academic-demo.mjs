@@ -4,7 +4,6 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import puppeteer from 'puppeteer-core';
 import { runPoolLockSweep } from '../../backend/src/modules/pools/poolWorker.js';
-import { notifyMatchingWatches } from '../../backend/src/modules/pools/watch.service.js';
 import { createApp } from '../../backend/src/app.js';
 import { connectDB, disconnectDB } from '../../backend/src/config/db.js';
 import { env } from '../../backend/src/config/env.js';
@@ -132,6 +131,8 @@ test('three customers see a private visit sequence, follow the technician throug
   for (const [index, account] of customerAccounts.entries()) {
     const page = await login(account);
     customers.push(page);
+    await page.click('.visit-request a');
+    await page.waitForSelector('.pool-finder');
     if (index === 1) {
       await click(page, 'Choose location');
       const coords = await page.$$('.pool-finder input[type=number]');
@@ -148,15 +149,6 @@ test('three customers see a private visit sequence, follow the technician throug
     const value = service.id + '/AC service';
     await page.waitForSelector('option[value="' + value + '"]');
     await page.select('form select', value);
-    if (index === 0) {
-      await page.click('summary::-p-text(More booking options)');
-      const individualUrl = await page.$eval('a::-p-text(Book individually)', link => link.href);
-      const individual = await page.browserContext().newPage();
-      await individual.goto(individualUrl, { waitUntil: 'domcontentloaded' });
-      await individual.waitForFunction(() => [...document.querySelectorAll('select')].some(el => el.value === 'individual')
-        && [...document.querySelectorAll('select')].some(el => el.value === 'AC service'));
-      await individual.close();
-    }
     await page.$$eval('input[type=datetime-local]', (inputs, start) => {
       for (const [i, value] of [start, start + 120 * 60000].entries()) {
         const date = new Date(value);
@@ -173,30 +165,11 @@ test('three customers see a private visit sequence, follow the technician throug
     } else {
       await page.waitForFunction(price => document.body.innerText.includes(price + ' per visit'), {}, index ? '₹540' : '₹600');
     }
-    if (index === 1) {
-      await page.click('summary::-p-text(More booking options)');
-      await page.click('summary::-p-text(Watch for a price)');
-      await page.type('details[open] form input[type=number]', '540');
-      await click(page, 'Save price watch');
-      await page.waitForFunction(() => document.body.innerText.includes('Watch saved.'));
-      await notifyMatchingWatches();
-      const inbox = await page.browserContext().newPage();
-      await inbox.goto(origin + '/notifications', { waitUntil: 'domcontentloaded' });
-      const alert = await inbox.waitForSelector('a[href*="watch=1"]');
-      await alert.click();
-      await click(inbox, 'Check matching price');
-      await inbox.waitForFunction(() => document.body.innerText.includes('₹540 per person'));
-      await inbox.close();
-    }
-    if (!index) {
-      await page.click('summary::-p-text(Set a maximum price)');
-      await page.type('input[placeholder="No limit · keep my visit"]', '550');
-    }
     await click(page, 'Confirm booking');
     await page.waitForFunction(() => location.pathname.startsWith('/bookings/'));
     await page.goto(origin, { waitUntil: 'domcontentloaded' });
     if (!index) {
-      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 for your visit') && document.body.innerText.includes('₹550'));
+      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 for your visit'));
     }
   }
   await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 for your visit'));

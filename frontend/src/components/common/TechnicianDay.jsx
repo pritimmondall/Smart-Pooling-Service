@@ -7,7 +7,7 @@ import Modal from './Modal.jsx';
 const onSite = status => ['arrived', 'in_progress'].includes(status);
 const time = value => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export default function TechnicianDay({ routes, processing, onArrive, onStart, onComplete, openIncident, pending, workNotice }) {
+export default function TechnicianDay({ routes, processing, onArrive, onStart, onComplete, openIncident, pending }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
@@ -46,8 +46,8 @@ export default function TechnicianDay({ routes, processing, onArrive, onStart, o
         </> : <>
           <Route className="desk-route-art" aria-hidden="true" strokeWidth={1}/>
           <h3>{pending ? 'Your assignment is ready' : 'No visit lined up'}</h3>
-          <p className="desk-visit-note">{pending ? 'Accept a job to see your first stop and directions.' : workNotice ? 'Your next stop will appear here after you accept an assignment.' : 'Claim available work to start planning your route.'}</p>
-          {(pending > 0 || !workNotice) && <a className="desk-primary" href={pending ? '#assigned-work' : '#available-work'}>{pending ? 'Review assignments' : 'Browse available work'}<ArrowUpRight size={16}/></a>}
+          <p className="desk-visit-note">{pending ? 'Accept a job to see your first stop and directions.' : 'When a visit matches your skills and availability, it will appear in your assignments.'}</p>
+          {pending > 0 && <a className="desk-primary" href="#assigned-work">Review assignments<ArrowUpRight size={16}/></a>}
         </>}
       </div>
       {points.length > 0 && <div className="desk-map"><VisitMap precise route={{ line: [], stops: points }}/>

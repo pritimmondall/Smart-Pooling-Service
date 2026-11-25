@@ -27,7 +27,6 @@ import './TechnicianDashboard.css';
 import { useAuth } from '../context/AuthContext.jsx';
 import { techniciansApi } from '../api/client.js';
 import TechnicianDay, { VisitException } from '../components/common/TechnicianDay.jsx';
-import TechnicianOpportunities from '../components/common/TechnicianOpportunities.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 import LoadingSpinner from '../components/common/LoadingSpinner.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
@@ -53,7 +52,6 @@ export default function TechnicianDashboard() {
 
   const [counts, setCounts] = useState({});
   const [routes, setRoutes] = useState([]);
-  const [opportunities, setOpportunities] = useState(null);
   const requestId = useRef(0);
 
   // Filters
@@ -141,17 +139,16 @@ export default function TechnicianDashboard() {
       else setRefreshing(true);
       setError(null);
 
-      const [profileRes, jobsRes, earningsRes, routeRes, workRes] = await Promise.all([
+      const [profileRes, jobsRes, earningsRes, routeRes] = await Promise.all([
         techniciansApi.getMe(),
 
         techniciansApi.getMyJobs({ limit: 50, page: jobPage, status: statusFilter === 'all' ? undefined : statusFilter, type: typeFilter === 'all' ? undefined : typeFilter, q: query }),
-        techniciansApi.getEarnings(), techniciansApi.activeRoutes(), techniciansApi.opportunities(),
+        techniciansApi.getEarnings(), techniciansApi.activeRoutes(),
       ]);
 
       if (request !== requestId.current) return;
       setCounts(jobsRes.meta.counts);
       setRoutes(routeRes.data);
-      setOpportunities(workRes);
       const fetchedJobs = jobsRes?.data || [];
       setProfile(profileRes?.data || null);
       setJobs(fetchedJobs);
@@ -495,11 +492,10 @@ export default function TechnicianDashboard() {
       </div>
 
       <TechnicianDay routes={routes} processing={processingStops} onArrive={handleArriveStop} onStart={handleStartStop}
-        onComplete={handleCompleteStop} openIncident={openIncident} pending={pending} workNotice={workNotice}/>
+        onComplete={handleCompleteStop} openIncident={openIncident} pending={pending}/>
 
 
-      <div className="desk-market">
-        <TechnicianOpportunities opportunities={opportunities} profile={profile} onRefresh={fetchData}/>
+      <div className="desk-earnings-section">
         <aside className="desk-ledger" id="field-earnings">
           <Wallet size={21}/><h2>Estimated earnings</h2>
           <strong>{earnings ? fare(earnings.totalPaise) : '—'}</strong><p>Lifetime total</p>

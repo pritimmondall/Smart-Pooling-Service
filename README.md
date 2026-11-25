@@ -26,16 +26,14 @@ Open [SmartPool](http://localhost:5001). Express serves both the built frontend 
 ## Try the workflow
 
 1. Sign in with the seeded customer account `customer1@smartpool.demo` and password `CustomerDemo123!`, or register a customer.
-2. On the dashboard or **Book a Service**, select the service, pin the entrance, and enter a preferred start and end. Review the estimated price and confirm. SmartPool creates or joins a compatible group automatically.
+2. From **Your visits**, open **Book a visit**. Select the service, pin the entrance, and enter a preferred start and end. Review the estimated price and confirm. SmartPool creates or joins a compatible group automatically.
 3. When the original window has no match, SmartPool can offer a different window up to two hours earlier or later. Keeping the original time is the default. Accepting a shift records the original window and bonus on the booking. If the offer changes before confirmation, the customer can request a fresh quote.
 4. The pool closes at capacity or the service cutoff. Every 30 seconds the dispatch worker checks waiting pools. It ranks eligible technicians by distance from their base to the group, then rating. It checks skills, service radius, availability, workload, overlapping jobs and the full shared window against working days and hours in Indian Standard Time. An unassigned visit that reaches the end of its window is cancelled with an in-app notice.
-5. For the seeded AC service, sign in with `tech.ac@smartpool.demo` and password `TechDemo123!`. Set availability, inspect assigned jobs and acknowledge the assignment. The route planner sequences homes from the technician’s location and shows the visit order. Legacy manual pools and dedicated bookings are also available.
+5. For the seeded AC service, sign in with `tech.ac@smartpool.demo` and password `TechDemo123!`. Set availability, inspect assigned jobs and acknowledge the assignment. The route planner sequences homes from the technician’s location and shows the visit order.
 
-## Customer pooling options
+## Visit tracking
 
-Customers can set a maximum closing price before booking. SmartPool evaluates limits when a pool fills or reaches its deadline. If a cancellation raises the price, the remaining limits are checked again in the same transaction. A blank limit keeps the visit at the applicable rate.
-
-A price watch sends one in-app notification when an automatic pool matches the selected service, location, window and budget. The pool worker checks watches during dispatch sweeps. Customers can remove pending watches. Reviewing the invitation checks availability again. After the technician accepts, each member’s dashboard displays the saved visit order on a collapsible map, highlights their home and shows the remaining stops ahead. Other homes appear at approximate neighbourhood grid centres. Road overviews connect these areas when available. Simulated routes, single-area pools and routing failures use a labelled schematic.
+After the technician accepts, each member’s dashboard displays the saved visit order on a collapsible map, highlights their home and shows the remaining stops ahead. Other homes appear at approximate neighbourhood grid centres. Road overviews connect these areas when available. Simulated routes, single-area pools and routing failures use a labelled schematic.
 
 ## Pricing and routes
 

@@ -2,13 +2,11 @@ import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
-  Compass,
   CalendarPlus,
   Clock,
   Bell,
   User,
   X,
-  Plus,
   Wrench,
   Activity,
 } from 'lucide-react';
@@ -16,10 +14,9 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { useNotifications } from '../../context/NotificationContext.jsx';
 
 const CUSTOMER_NAV_ITEMS = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
-  { to: '/services', label: 'Discover Services', icon: Compass },
-  { to: '/create-booking', label: 'Book a Service', icon: CalendarPlus },
-  { to: '/bookings', label: 'My Bookings', icon: Clock },
+  { to: '/', label: 'Your visits', icon: LayoutDashboard, end: true },
+  { to: '/create-booking', label: 'Book a visit', icon: CalendarPlus },
+  { to: '/bookings', label: 'Visit history', icon: Clock },
   { to: '/notifications', label: 'Notifications', icon: Bell, badge: true },
   { to: '/profile', label: 'Profile & Settings', icon: User },
 ];
@@ -69,29 +66,6 @@ export default function Sidebar({ isOpen, onClose }) {
             </button>
           </div>
 
-          {/* Quick Action CTA */}
-          {!isAdmin && <div className="mb-6">
-            {isTechnician ? (
-              <NavLink
-                to="/technician/jobs"
-                onClick={() => onClose?.()}
-                className="w-full glass-button-primary bg-[#275c47] hover:bg-[#173d36] py-2.5 px-4 text-xs font-semibold shadow-sm hover:shadow text-white flex items-center justify-center gap-2"
-              >
-                <Wrench className="w-4 h-4 stroke-[2.2]" />
-                View Assigned Work
-              </NavLink>
-            ) : (
-              <NavLink
-                to="/create-booking"
-                onClick={() => onClose?.()}
-                className="w-full glass-button-primary py-2.5 px-4 text-xs font-semibold shadow-sm hover:shadow flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4 stroke-[2.5]" />
-                New Service Booking
-              </NavLink>
-            )}
-          </div>}
-
           {/* Nav Links */}
           <nav className="space-y-1">
             {navItems.map((item) => {
@@ -132,17 +106,6 @@ export default function Sidebar({ isOpen, onClose }) {
           </nav>
         </div>
 
-        {/* Footer info card */}
-        {!isAdmin && <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/60 text-[11px] text-slate-500">
-          <p className="font-semibold text-slate-700">
-            {isTechnician ? 'Technician Field Portal' : 'Service Pooling Mode'}
-          </p>
-          <p className="mt-0.5 text-slate-400 leading-snug">
-            {isTechnician
-              ? 'Multi-stop road route optimization, live dispatch updates, and workload capacity management.'
-              : 'Save up to 30% by pooling nearby service bookings with compatible neighbors.'}
-          </p>
-        </div>}
       </aside>
     </>
   );

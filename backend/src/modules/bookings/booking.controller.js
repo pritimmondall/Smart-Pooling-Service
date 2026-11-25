@@ -272,7 +272,10 @@ export const createBooking = asyncHandler(async (req, res) => {
 export const getDashboardBooking = asyncHandler(async (req, res) => {
   const customerId = req.user._id;
   const select = 'acceptedShift closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
-  const next = await Booking.findOne({ customerId, status: { $nin: ['completed', 'cancelled'] } })
+  const next = await Booking.findOne({ customerId, $or: [
+    { status: { $in: ['arrived', 'in_progress'] } },
+    { status: { $in: ['pending', 'confirmed', 'assigned', 'accepted'] }, 'timeWindow.end': { $gt: new Date() } },
+  ] })
     .sort({ 'timeWindow.start': 1, _id: 1 }).select(select).lean()
     || await Booking.findOne({ customerId, status: 'completed', customerConfirmedAt: null })
       .sort({ updatedAt: -1 }).select(select).lean();
