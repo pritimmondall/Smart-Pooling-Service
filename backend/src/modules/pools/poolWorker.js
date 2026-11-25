@@ -1,6 +1,6 @@
 import { runInTransaction } from '../../config/db.js';
 import { notifyTechniciansOfNewPool } from './formingPoolAlerts.service.js';
-import { Booking, ServicePool, Notification } from '../../models/index.js';
+import { Booking, ServicePool, PoolMembership, Notification } from '../../models/index.js';
 import {
   findEligibleTechniciansForPool,
   findEligibleTechniciansForBooking,
@@ -98,9 +98,31 @@ export function isPoolWorkerActive() {
 }
 
 
+async function closeUnassignedVisits(now) {
+  const expired = { automaticDispatch: true, status: 'locked', assignedTechnicianId: null,
+    'aggregateTimeWindow.end': { $lte: now } };
+  for await (const { _id } of ServicePool.find(expired).select('_id').lean().cursor()) {
+    await runInTransaction(async session => {
+      const pool = await ServicePool.findOneAndUpdate({ _id, ...expired }, {
+        $set: { status: 'cancelled', 'members.$[active].status': 'cancelled' },
+      }, { session, arrayFilters: [{ 'active.status': 'active' }] });
+      if (!pool) return;
+      const members = pool.members.filter(member => member.status === 'active');
+      await Booking.updateMany({ poolId: _id, status: { $in: ['pending', 'confirmed'] } },
+        { $set: { status: 'cancelled', poolId: null, cancelledAt: now } }, { session });
+      await PoolMembership.updateMany({ poolId: _id, status: 'active' }, { status: 'cancelled' }, { session });
+      if (members.length) await Notification.insertMany(members.map(member => ({
+        userId: member.customerId, role: 'customer', relatedEntityId: member.bookingId, type: 'booking',
+        title: 'Visit window ended', message: 'No technician was available for your visit. Please choose another time to rebook.',
+      })), { session, ordered: true });
+    }, { requireTransaction: true });
+  }
+}
+
 export async function dispatchWaitingJobs(now = new Date()) {
+  await closeUnassignedVisits(now);
   const forming = ServicePool.find({
-    status: 'forming', formingAlertsSent: { $ne: true }, lockCutoffTime: { $gt: now },
+    automaticDispatch: { $ne: true }, status: 'forming', formingAlertsSent: { $ne: true }, lockCutoffTime: { $gt: now },
   }).populate('serviceCategoryId', 'name').cursor();
   for await (const pool of forming) {
     if (pool.serviceCategoryId) {
@@ -110,7 +132,7 @@ export async function dispatchWaitingJobs(now = new Date()) {
   }
   const pools = ServicePool.find({
     status: 'locked', assignedTechnicianId: null, 'aggregateTimeWindow.end': { $gt: now },
-  }).sort({ 'aggregateTimeWindow.start': 1 }).select('_id reservedTechnicianId').lean().cursor();
+  }).sort({ 'aggregateTimeWindow.start': 1 }).select('_id reservedTechnicianId automaticDispatch').lean().cursor();
   const bookings = Booking.find({
     bookingMode: 'individual', poolId: null, technicianId: null,
     status: { $in: ['pending', 'confirmed'] }, 'timeWindow.end': { $gt: now },
@@ -134,6 +156,15 @@ export async function dispatchWaitingJobs(now = new Date()) {
         }
         const { eligibleTechnicians } = await candidates(job._id);
         for (const tech of eligibleTechnicians) {
+          if (job.automaticDispatch) {
+            try {
+              await assignPoolToTechnician(job._id, tech.technicianId, { requireOpen: true });
+              break;
+            } catch (err) {
+              if (err.code === 'TECHNICIAN_NOT_ELIGIBLE') continue;
+              throw err;
+            }
+          }
           await Notification.updateOne({ userId: tech.technicianId, relatedEntityId: job._id, type: 'opportunity' }, {
             $setOnInsert: { role: 'technician', title: 'Service available',
               message: 'A job matching your services is ready. Open available work to claim it.' },

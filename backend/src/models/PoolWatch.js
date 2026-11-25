@@ -8,6 +8,7 @@ const schema = new mongoose.Schema({
   location: { type: createGeoPointSchema(true), required: true },
   start: { type: Date, required: true },
   end: { type: Date, required: true },
+  automaticDispatch: { type: Boolean, default: false },
   maxPrice: { type: Number, required: true },
 });
 schema.index({ end: 1 }, { expireAfterSeconds: 0 });

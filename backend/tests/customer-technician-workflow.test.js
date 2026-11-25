@@ -233,4 +233,57 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
     }
     await request(neighbor, '/pools/nearby?lat=22.5236&lng=88.36&radiusKm=2', 'GET', undefined, 400);
   });
+  await t.test('automatic visits require shift consent, settle individual fares and dispatch within working hours', async () => {
+    const service = await ServiceCategory.create({ name: 'Automatic visit', slug: 'auto-test', baseIndividualPrice: 600,
+      estimatedDurationMins: 30, maxPoolSize: 2 });
+    const start = new Date(Date.now() + 7 * 86400000);
+    start.setUTCHours(5, 0, 0, 0); // 10:30 in the service area
+    const window = minutes => ({ start: new Date(+start + minutes * 60000), end: new Date(+start + (minutes + 120) * 60000) });
+    const input = { ...payload, specificService: service.name, serviceCategoryId: service.id, automaticDispatch: true, timeWindow: window(0) };
+    const first = (await request(owner, '/bookings', 'POST', input, 201)).data;
+    const id = first.poolId._id;
+    const later = { ...input, timeWindow: window(120) };
+    const { shiftOffer, finalPricePerMember } = (await request(neighbor, '/bookings/quote', 'POST', later)).data;
+    assert.equal(finalPricePerMember, 600);
+    assert.equal(shiftOffer.price, 510);
+    assert.equal(shiftOffer.creditPaise, 3000);
+    assert.equal(shiftOffer.poolId, id);
+    await request(neighbor, '/bookings', 'POST', { ...later, acceptShift: { ...shiftOffer, price: 1 } }, 409);
+    const unchanged = (await request(neighbor, '/bookings', 'POST', later, 201)).data;
+    assert.notEqual(unchanged.poolId._id, id);
+    assert.equal(unchanged.timeWindow.start, later.timeWindow.start.toISOString());
+    await request(neighbor, '/bookings/' + unchanged._id + '/cancel', 'PATCH');
+    const second = (await request(neighbor, '/bookings', 'POST', { ...later, acceptShift: shiftOffer, closingPriceLimit: 510 }, 201)).data;
+    assert.equal(second.poolId._id, id);
+    assert.equal(second.timeWindow.start, shiftOffer.timeWindow.start);
+    assert.equal(second.estimatedPrice, 510);
+    assert.equal(second.acceptedShift.originalStart, later.timeWindow.start.toISOString());
+    assert.equal(second.poolId.pricing.poolTotalPaise, 105000);
+    assert.equal((await Booking.findById(first._id)).estimatedPrice, 540);
+    await request(distant, '/bookings', 'POST', { ...later, acceptShift: shiftOffer }, 409);
+    await request(tech, '/technicians/me/opportunities/' + id + '/claim', 'POST', { kind: 'pool' }, 409);
+
+    const profiles = [];
+    for (const [name, lng, from] of [['off-shift', 88.36, '16:00'], ['closer', 88.361, '09:00'], ['farther', 88.37, '09:00']]) {
+      const user = await User.create({ name, email: name + '@auto.test', role: 'technician', passwordHash: 'password' });
+      profiles.push(user);
+      await TechnicianProfile.create({ userId: user._id, serviceCategories: [service._id], availabilityStatus: 'available',
+        approvalStatus: 'approved', baseLocation: { type: 'Point', coordinates: [lng, 22.52] },
+        workingHours: { start: from, end: '18:00', daysOfWeek: [0,1,2,3,4,5,6] } });
+    }
+    await runPoolLockSweep({ dispatch: true });
+    assert.equal(String((await ServicePool.findById(id)).assignedTechnicianId), profiles[1].id);
+    await request(profiles[1], '/technicians/me/jobs/' + id + '/accept', 'POST', {});
+    const accepted = await ServicePool.findById(id);
+    assert.deepEqual(new Set(accepted.routeOrder.map(stop => String(stop.bookingId))), new Set([first._id, second._id]));
+    const missed = (await request(distant, '/bookings', 'POST', input, 201)).data;
+    await ServicePool.updateOne({ _id: missed.poolId._id }, { $set: { lockCutoffTime: new Date(0),
+      aggregateTimeWindow: { start: new Date(1000), end: new Date(2000) } } });
+    await runPoolLockSweep({ dispatch: true });
+    assert.equal((await Booking.findById(missed._id)).status, 'cancelled');
+    assert.equal(await PoolMembership.countDocuments({ bookingId: missed._id, status: 'active' }), 0);
+    assert.ok((await request(distant, '/notifications/my')).data.some(n => n.relatedEntityId === missed._id && n.title === 'Visit window ended'));
+
+  });
+
 });

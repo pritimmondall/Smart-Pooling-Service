@@ -29,7 +29,7 @@ export const listOpportunities = asyncHandler(async (req, res) => {
   const category = { $in: profile.serviceCategories };
   const future = { $gt: new Date() };
   const forming = await ServicePool.find({
-    status: 'forming', assignedTechnicianId: null, reservedTechnicianId: { $in: [null, req.user._id] },
+    automaticDispatch: { $ne: true }, status: 'forming', assignedTechnicianId: null, reservedTechnicianId: { $in: [null, req.user._id] },
     serviceCategoryId: category, lockCutoffTime: future, 'aggregateTimeWindow.end': future,
   }).select('specificService serviceCategoryId pricing.memberCount pricing.poolTotal pricing.finalPricePerMember maxCapacity lockCutoffTime aggregateTimeWindow centroidLocation members.status members.location reservedTechnicianId rejectedTechnicians')
     .populate('serviceCategoryId', 'name estimatedDurationMins').sort({ createdAt: 1 }).lean();
@@ -48,7 +48,7 @@ export const listOpportunities = asyncHandler(async (req, res) => {
   }
   if (profile.availabilityStatus !== 'available') return sendSuccess(res, { data: [], meta: { formingPools } });
   const [pools, bookings] = await Promise.all([
-    ServicePool.find({ status: 'locked', assignedTechnicianId: null, reservedTechnicianId: { $in: [null, req.user._id] }, serviceCategoryId: category, 'aggregateTimeWindow.end': future }).populate('serviceCategoryId', 'name estimatedDurationMins'),
+    ServicePool.find({ automaticDispatch: { $ne: true }, status: 'locked', assignedTechnicianId: null, reservedTechnicianId: { $in: [null, req.user._id] }, serviceCategoryId: category, 'aggregateTimeWindow.end': future }).populate('serviceCategoryId', 'name estimatedDurationMins'),
     Booking.find({ status: { $in: ['pending', 'confirmed'] }, bookingMode: 'individual', technicianId: null, serviceCategoryId: category, 'timeWindow.end': future }).populate('serviceCategoryId', 'name estimatedDurationMins'),
   ]);
   const items = [];
@@ -68,7 +68,8 @@ export const claimOpportunity = asyncHandler(async (req, res) => {
   const kind = req.body.kind;
   if (!['individual','pool'].includes(kind)) throw new AppError(400, 'Invalid job type.', 'INVALID_JOB_TYPE');
   if (kind === 'pool') {
-    const pool = await ServicePool.findById(req.params.id).select('status');
+    const pool = await ServicePool.findById(req.params.id).select('status automaticDispatch');
+    if (pool?.automaticDispatch) throw new AppError(409, 'SmartPool assigns this visit automatically.', 'AUTO_DISPATCH');
     if (pool?.status === 'forming') {
       await reserveFormingPoolForTechnician(req.params.id, req.user._id);
       return sendSuccess(res, { data: { id: req.params.id, reserved: true } });

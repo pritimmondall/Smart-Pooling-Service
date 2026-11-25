@@ -24,6 +24,18 @@ export function doTimeWindowsOverlap(windowA, windowB) {
   return Math.max(startA, startB) < Math.min(endA, endB);
 }
 
+export function withinServiceHours(window, hours) {
+  if (!hours) return false;
+  // Technician working schedules are local wall-clock times in the Indian service area.
+  const local = value => new Date(new Date(value).getTime() + 330 * 60000);
+  const start = local(window.start);
+  const end = local(window.end);
+  const minutes = date => date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60;
+  const clock = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+  return start.toISOString().slice(0, 10) === end.toISOString().slice(0, 10) &&
+    hours.daysOfWeek.includes(start.getUTCDay()) && minutes(start) >= clock(hours.start) && minutes(end) <= clock(hours.end);
+}
+
 /**
  * Evaluates technician eligibility for a locked service pool.
  *
@@ -117,6 +129,9 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
   // 7. Scheduling conflicts check
   const targetWindow = pool.aggregateTimeWindow;
   if (targetWindow?.start && targetWindow?.end) {
+    if (pool.automaticDispatch && !withinServiceHours(targetWindow, profile.workingHours)) {
+      reasons.push('The visit window falls outside your scheduled working hours.');
+    }
     // Check assigned pools
     const activeAssignedPools = await ServicePool.find(
       {
@@ -170,7 +185,7 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
   return {
     isEligible: reasons.length === 0,
     reasons,
-    distanceKm: Number.isFinite(distanceKm) ? Number(distanceKm.toFixed(2)) : 0,
+    distanceKm: Number.isFinite(distanceKm) ? (pool.automaticDispatch ? distanceKm : Number(distanceKm.toFixed(2))) : 0,
     currentWorkload,
   };
 }

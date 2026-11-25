@@ -22,6 +22,7 @@ const bookingSchema = new mongoose.Schema(
       index: true,
     },
     specificService: { type: String, maxlength: 100 },
+    automaticDispatch: { type: Boolean, default: false },
     poolScope: { type: String, enum: ['building', '200m', '500m', '1km'] },
     buildingKey: { type: String, maxlength: 160 },
     serviceCategoryId: {
@@ -78,6 +79,10 @@ const bookingSchema = new mongoose.Schema(
       default: 'pending',
     },
     closingPriceLimit: { type: Number, min: 0 },
+    acceptedShift: {
+      originalStart: Date, originalEnd: Date, acceptedAt: Date,
+      bonusPercentage: Number, creditPaise: Number,
+    },
     estimatedPrice: {
       type: Number,
       required: true,

@@ -13,7 +13,7 @@ import {
   BOOKING_MODES,
   BOOKING_STATUSES,
 } from '../../models/index.js';
-import { calculatePoolPricing } from '../pools/pricing.service.js';
+import { calculatePoolPricing, SHIFT_BONUS_PERCENTAGE, shiftedFare } from '../pools/pricing.service.js';
 import { AppError } from '../../utils/appError.js';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { parseGeoInput } from '../../utils/geo.js';
@@ -62,9 +62,15 @@ export const quoteBooking = asyncHandler(async (req, res) => {
   if (!mongoose.isValidObjectId(serviceCategoryId)) throw new AppError(400, 'Invalid service category.', 'INVALID_ID');
   const category = await ServiceCategory.findOne({ _id: serviceCategoryId, isActive: true });
   if (!category) throw new AppError(404, 'Service unavailable.', 'SERVICE_NOT_FOUND');
-  const candidates = await findCompatiblePools({
-    customerId: req.user._id, serviceCategoryId, specificService: req.body.specificService, location: parseGeoInput(location), timeWindow: parseTimeWindow(timeWindow),
-  });
+  const criteria = {
+    customerId: req.user._id, serviceCategoryId, specificService: req.body.specificService,
+    automaticDispatch: req.body.automaticDispatch === true,
+    location: parseGeoInput(location), timeWindow: parseTimeWindow(timeWindow),
+  };
+  if (criteria.automaticDispatch) validateVisit(category, criteria);
+  const candidates = await findCompatiblePools(criteria);
+  const shiftOffer = criteria.automaticDispatch && !candidates.length
+    ? await findShiftOffer(criteria, category) : null;
   const [candidate] = candidates;
   const pricing = calculatePoolPricing({
     basePrice: category.baseIndividualPrice, memberCount: (candidate?.activeMembersCount || 0) + 1,
@@ -79,8 +85,27 @@ export const quoteBooking = asyncHandler(async (req, res) => {
     distanceMeters: Math.round(candidate.distanceKm * 1000),
     overlapMinutes: Math.floor((candidate.newIntersection.end - candidate.newIntersection.start) / 60000),
   } : null;
-  return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch } });
+  return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch, shiftOffer } });
 });
+
+function validateVisit(category, { specificService, timeWindow }) {
+  if (!serviceOptions(category).services.includes(specificService)) {
+    throw new AppError(400, 'Choose an available service.', 'INVALID_SERVICE');
+  }
+  if (+timeWindow.end - +timeWindow.start < category.estimatedDurationMins * 60000) {
+    throw new AppError(400, `Allow at least ${category.estimatedDurationMins} minutes for this service.`, 'SHORT_WINDOW');
+  }
+}
+
+async function findShiftOffer(criteria, category) {
+  const candidates = await findCompatiblePools({ ...criteria, allowShift: true });
+  const [best] = candidates;
+  if (!best) return null;
+  const pricing = calculatePoolPricing({ basePrice: category.baseIndividualPrice, memberCount: best.activeMembersCount + 1 });
+  const { payable, creditPaise } = shiftedFare(pricing, SHIFT_BONUS_PERCENTAGE);
+  if (!creditPaise) return null;
+  return { poolId: best.pool._id, timeWindow: best.offeredWindow, price: payable, creditPaise };
+}
 
 function validatePriceLimit(value) {
   if (typeof value !== 'number' || value <= 0 || !Number.isSafeInteger(Math.round(value * 100)) ||
@@ -95,7 +120,7 @@ export const createWatch = asyncHandler(async (req, res) => {
   if (!mongoose.isObjectIdOrHexString(serviceCategoryId)) throw new AppError(400, 'Invalid service.', 'INVALID_ID');
   const category = await ServiceCategory.findOne({ _id: serviceCategoryId, isActive: true });
   if (!category || !serviceOptions(category).services.includes(specificService)) throw new AppError(400, 'Choose an available service.', 'INVALID_SERVICE');
-  const watch = await PoolWatch.create({ customerId: req.user._id, serviceCategoryId, specificService, maxPrice,
+  const watch = await PoolWatch.create({ customerId: req.user._id, serviceCategoryId, specificService, maxPrice, automaticDispatch: req.body.automaticDispatch === true,
     location: parseGeoInput(req.body.location), ...parseTimeWindow(req.body.timeWindow) });
   return sendSuccess(res, { statusCode: 201, data: watch });
 });
@@ -160,7 +185,7 @@ export const createBooking = asyncHandler(async (req, res) => {
 
   const geoLocation = parseGeoInput(location);
   const target = targetPoolId ? await ServicePool.findById(targetPoolId) : null;
-  if (targetPoolId && (!target || String(target.serviceCategoryId) !== String(category._id))) {
+  if (targetPoolId && (!target || target.automaticDispatch || String(target.serviceCategoryId) !== String(category._id))) {
     throw new AppError(409, 'This pool is unavailable.', 'POOL_UNAVAILABLE');
   }
   const specificService = target ? target.specificService : req.body.specificService;
@@ -176,7 +201,28 @@ export const createBooking = asyncHandler(async (req, res) => {
   const parsedWindow = target && req.body.watchWindow ? parseTimeWindow(req.body.watchWindow) : target ? target.aggregateTimeWindow : scope
     ? scheduledWindow(category, scope.capacity) : parseTimeWindow(timeWindow);
 
+  const automaticDispatch = req.body.automaticDispatch === true;
+  if (automaticDispatch) {
+    if (bookingMode !== 'pool' || scope || targetPoolId) throw new AppError(400, 'Choose a preferred window for automatic booking.', 'INVALID_MODE');
+    validateVisit(category, { specificService, timeWindow: parsedWindow });
+  }
+  const consent = req.body.acceptShift;
+  if (consent !== undefined && (!automaticDispatch || !mongoose.isObjectIdOrHexString(consent?.poolId))) {
+    throw new AppError(400, 'Invalid time shift offer.', 'INVALID_SHIFT');
+  }
+
   const { booking, pool: assignedPool } = await runBookingTransaction(async session => {
+    let offer = null;
+    if (consent) {
+      const criteria = { customerId: req.user._id, serviceCategoryId, specificService,
+        automaticDispatch, timeWindow: parsedWindow, location: geoLocation, session };
+      if (!(await findCompatiblePools(criteria)).length) offer = await findShiftOffer(criteria, category);
+      if (!offer || String(offer.poolId) !== consent.poolId || offer.price !== consent.price ||
+          +offer.timeWindow.start !== Date.parse(consent.timeWindow?.start) ||
+          +offer.timeWindow.end !== Date.parse(consent.timeWindow?.end)) {
+        throw new AppError(409, 'This time shift offer changed. Check your options again.', 'OFFER_CHANGED');
+      }
+    }
     await User.updateOne({ _id: req.user._id, poolAlertLocation: null }, { poolAlertLocation: geoLocation }, { session });
     const [booking] = await Booking.create([{
       customerId: req.user._id,
@@ -185,14 +231,17 @@ export const createBooking = asyncHandler(async (req, res) => {
       zoneId: validatedZoneId,
       location: geoLocation,
       addressText,
-      timeWindow: parsedWindow,
+      automaticDispatch,
+      timeWindow: offer?.timeWindow || parsedWindow,
+      ...(offer && { acceptedShift: { originalStart: parsedWindow.start, originalEnd: parsedWindow.end,
+        acceptedAt: new Date(), bonusPercentage: SHIFT_BONUS_PERCENTAGE, creditPaise: offer.creditPaise } }),
       bookingMode, closingPriceLimit,
       status: 'pending',
       estimatedPrice: category.baseIndividualPrice,
       notes,
     }], { session });
     if (bookingMode === 'pool') {
-      const matched = await matchAndAssignBooking(booking._id, { session, targetPoolId });
+      const matched = await matchAndAssignBooking(booking._id, { session, targetPoolId: offer?.poolId || targetPoolId });
       if (req.body.quotedPrice !== undefined && matched.booking.estimatedPrice > req.body.quotedPrice) {
         throw new AppError(409, 'The pool price changed. Review the updated quote.', 'QUOTE_CHANGED');
       }
@@ -222,7 +271,7 @@ export const createBooking = asyncHandler(async (req, res) => {
 
 export const getDashboardBooking = asyncHandler(async (req, res) => {
   const customerId = req.user._id;
-  const select = 'closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
+  const select = 'acceptedShift closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
   const next = await Booking.findOne({ customerId, status: { $nin: ['completed', 'cancelled'] } })
     .sort({ 'timeWindow.start': 1, _id: 1 }).select(select).lean()
     || await Booking.findOne({ customerId, status: 'completed', customerConfirmedAt: null })
@@ -232,20 +281,20 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
   const [service, technician, pool] = await Promise.all([
     ServiceCategory.findById(next.serviceCategoryId, 'name').lean(),
     next.technicianId && User.findById(next.technicianId, 'name').lean(),
-    next.poolId && ServicePool.findById(next.poolId, 'status poolScope sharedGeometry maxCapacity pricing lockCutoffTime aggregateTimeWindow members.customerId members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
+    next.poolId && ServicePool.findById(next.poolId, 'automaticDispatch status poolScope sharedGeometry maxCapacity pricing lockCutoffTime aggregateTimeWindow members.customerId members.bookingId members.status routeOrder.bookingId routeOrder.sequenceIndex routeOrder.estimatedServiceStart').lean(),
   ]);
   const stop = pool?.routeOrder?.find(item => String(item.bookingId) === String(next._id));
   const visitRoute = await customerVisitRoute(pool, next._id);
   const position = visitRoute?.stops.filter(item => !['completed', 'cancelled'].includes(item.status)).findIndex(item => item.yours);
   const visitsAhead = position >= 0 && ['accepted', 'assigned'].includes(next.status) ? position : null;
   const nextPrice = pool?.status === 'forming' && pool.pricing.memberCount < pool.maxCapacity
-    ? calculatePoolPricing({ basePrice: pool.pricing.individualBasePrice, memberCount: pool.pricing.memberCount + 1 }).finalPricePerMember : null;
+    ? shiftedFare(calculatePoolPricing({ basePrice: pool.pricing.individualBasePrice, memberCount: pool.pricing.memberCount + 1 }), next.acceptedShift?.bonusPercentage).payable : null;
   return sendSuccess(res, { data: {
     visitRoute, visitsAhead, closingPriceLimit: next.closingPriceLimit, serviceCategoryId: next.serviceCategoryId,
     id: next._id, service: next.specificService || service?.name, status: next.status,
     price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
     window: pool?.aggregateTimeWindow || next.timeWindow,
-    pool: pool && { id: pool._id, canEditCutoff: canEditPoolCutoff(pool, customerId), nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
+    pool: pool && { id: pool._id, automaticDispatch: pool.automaticDispatch, canEditCutoff: canEditPoolCutoff(pool, customerId), nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
   } });
 });
 
@@ -348,7 +397,7 @@ export const updateMyBooking = asyncHandler(async (req, res) => {
     if (booking.specificService && bookingMode === 'pool' && booking.bookingMode === 'individual') {
       throw new AppError(409, 'Use manual booking to choose a pool area or join a nearby pool.', 'POOL_AREA_REQUIRED');
     }
-    if (booking.poolScope && [timeWindow, location, bookingMode, addressText].some(value => value !== undefined)) {
+    if ((booking.poolScope || booking.automaticDispatch) && [timeWindow, location, bookingMode, addressText].some(value => value !== undefined)) {
       throw new AppError(409, 'Cancel and rebook to change a scheduled pool.', 'SCHEDULED_POOL');
     }
     let rematchedNeeded = false;

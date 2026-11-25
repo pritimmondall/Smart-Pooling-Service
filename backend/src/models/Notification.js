@@ -32,6 +32,7 @@ const notificationSchema = new mongoose.Schema(
     invitation: {
       serviceCategoryId: mongoose.Schema.Types.ObjectId,
       lat: Number, lng: Number, fromWatch: Boolean,
+      automaticDispatch: Boolean, specificService: String,
       start: Date,
       end: Date,
     },

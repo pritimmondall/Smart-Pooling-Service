@@ -101,7 +101,7 @@ export default function ServicesPage() {
               How Smart Service Pooling Works
             </p>
             <p className="text-[11px] text-emerald-700 leading-snug">
-              When you select &apos;Service Pool&apos; during booking, our platform automatically groups you with nearby neighbors requesting the same service, cutting technician travel and lowering your service price.
+              Choose your location and preferred time. SmartPool groups nearby bookings for the same service and assigns an available technician.
             </p>
           </div>
         </div>

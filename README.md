@@ -1,6 +1,6 @@
 # SmartPool
 
-SmartPool groups nearby home-service bookings with overlapping time windows. Customers can compare an individual price with a pool estimate, track a booking, confirm completion and rate the technician. Technicians claim eligible jobs, inspect road routes, navigate to customers, complete stops and review estimated earnings.
+SmartPool groups nearby home-service bookings with overlapping time windows. Customers can compare an individual price with a pool estimate, track a booking, confirm completion and rate the technician. SmartPool assigns automatic visits to eligible technicians, who inspect road routes, navigate to customers, complete stops and review estimated earnings.
 
 ## Run locally
 
@@ -26,14 +26,12 @@ Open [SmartPool](http://localhost:5001). Express serves both the built frontend 
 ## Try the workflow
 
 1. Sign in with the seeded customer account `customer1@smartpool.demo` and password `CustomerDemo123!`, or register a customer.
-2. Save a location in Profile to see open pools across services within 200 m on the dashboard. Manual booking groups specific services under a domain. On the customer dashboard, choose a service and preferred window, then select “Find my best pool” to compare the individual and pooled prices before confirming. The active booking card updates automatically when another customer joins and shows the estimated visit when the route is available. SmartPool starts a pool when there is no eligible match.
-3. For a pool, select the entrance on the map or use address search. Same-building pools allow 10 members and match the normalized building/block name and pins within 100 m. The 200 m, 500 m and 1 km options allow 6, 4 and 2 members respectively, including the creator.
-4. Another customer can join from the dashboard, an invitation, or a matching service in manual booking. Each join updates everyone's price. Customer-selected pools close when full or after 30 minutes. Automatic pools use the service’s dispatch cutoff before the shared appointment window. The system schedules a shared window after the service's dispatch lead time and estimates each visit in booking order with 15 minutes between visits.
-5. For seeded AC service, sign in with `tech.ac@smartpool.demo` and password `TechDemo123!`. Set the technician's work location, services and availability. Ready pools and individual requests appear oldest first. Eligible technicians get in-app alerts and can claim work, accept it and complete each visit.
+2. On the dashboard or **Book a Service**, select the service, pin the entrance, and enter a preferred start and end. Review the estimated price and confirm. SmartPool creates or joins a compatible group automatically.
+3. When the original window has no match, SmartPool can offer a different window up to two hours earlier or later. Keeping the original time is the default. Accepting a shift records the original window and bonus on the booking. If the offer changes before confirmation, the customer can request a fresh quote.
+4. The pool closes at capacity or the service cutoff. Every 30 seconds the dispatch worker checks waiting pools. It ranks eligible technicians by distance from their base to the group, then rating. It checks skills, service radius, availability, workload, overlapping jobs and the full shared window against working days and hours in Indian Standard Time. An unassigned visit that reaches the end of its window is cancelled with an in-app notice.
+5. For the seeded AC service, sign in with `tech.ac@smartpool.demo` and password `TechDemo123!`. Set availability, inspect assigned jobs and acknowledge the assignment. The route planner sequences homes from the technician’s location and shows the visit order. Legacy manual pools and dedicated bookings are also available.
 
 ## Customer pooling options
-
-The pool finder can compare the preferred window with shifts of one or two hours in either direction. Customers review the cheaper options and choose a window before confirming. A forming booking shows the price after one more member joins and offers an invitation link.
 
 Customers can set a maximum closing price before booking. SmartPool evaluates limits when a pool fills or reaches its deadline. If a cancellation raises the price, the remaining limits are checked again in the same transaction. A blank limit keeps the visit at the applicable rate.
 
@@ -41,9 +39,9 @@ A price watch sends one in-app notification when an automatic pool matches the s
 
 ## Pricing and routes
 
-Automatic matching requires the same service, room in the pool, a shared window long enough for the service and a maximum pairwise distance of 200 m. Eligible pools are ranked by 45% proximity to the centroid, 35% appointment overlap and 20% capacity filled. Automatic pools use the route planner to sequence visits. Customer-selected pools retain booking order.
+Automatic matching requires the same service, room in the pool, a shared window long enough for every visit plus a ten-minute allowance between homes and a maximum pairwise distance of 200 m. Eligible pools are ranked by 45% proximity to the centroid, 35% appointment overlap and 20% capacity filled. Automatic pools use the route planner to sequence visits. Customer-selected pools retain booking order.
 
-The demo discount is based on confirmed pool size. One member pays the individual price. Two, three, four and five members receive 10%, 15%, 20% and 25% respectively. Each additional member adds one percentage point, up to 30%. A ₹600 service costs ₹540 each for two customers or ₹510 each for three. Estimated route savings are calculated separately once a technician and route are known.
+The demo discount is based on confirmed pool size. The standard one-member rate is the individual price. Two, three, four and five members receive 10%, 15%, 20% and 25% respectively. Each additional member adds one percentage point, up to 30%. A ₹600 service costs ₹540 each for two customers or ₹510 each for three. An accepted shift adds up to five percentage points off the base price for that customer, subject to the 30% combined cap. For two ₹600 visits, a customer keeping their time pays ₹540 and a customer accepting a shift pays ₹510. The ₹1,050 pool total is the sum of the two fares. SmartPool recalculates in whole paise while the group forms and applies each customer's closing limit to their own fare. Estimated route savings are calculated separately once a technician and route are known.
 
 The technician earnings view sums each completed customer's discounted service price in whole paise. For example, two completed visits priced at ₹540 each earn ₹1,080. The app records estimated earnings. Actual payment collection and transfers require a payment provider.
 

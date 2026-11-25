@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import puppeteer from 'puppeteer-core';
+import { runPoolLockSweep } from '../../backend/src/modules/pools/poolWorker.js';
 import { notifyMatchingWatches } from '../../backend/src/modules/pools/watch.service.js';
 import { createApp } from '../../backend/src/app.js';
 import { connectDB, disconnectDB } from '../../backend/src/config/db.js';
@@ -125,23 +126,14 @@ test('three customers see a private visit sequence, follow the technician throug
   }
 
   const customers = [];
-  let firstWindow;
+  const monday = new Date(Date.now() + 86400000);
+  monday.setUTCDate(monday.getUTCDate() + (8 - monday.getUTCDay()) % 7);
+  monday.setUTCHours(5, 0, 0, 0);
   for (const [index, account] of customerAccounts.entries()) {
     const page = await login(account);
     customers.push(page);
     if (index === 1) {
-      const preview = await page.waitForSelector('.pool-nearby .pool-join');
-      assert.equal((await preview.evaluate(el => el.textContent)).trim(), 'Check joining area');
-      const previewUrl = new URL(await preview.evaluate(el => el.href));
-      assert.equal(previewUrl.searchParams.has('lat'), false);
-      const detail = await page.browserContext().newPage();
-      await detail.goto(previewUrl.href, { waitUntil: 'domcontentloaded' });
-      await detail.waitForFunction(() => document.body.innerText.includes('Choose your service location to check this pool.'));
-      assert.equal(await detail.$eval('button[type=submit], button.glass-button-primary', button => button.disabled), true);
-      await click(detail, 'Green Park / Jadavpur');
-      await detail.waitForFunction(() => document.body.innerText.includes('₹540 after joining'));
-      await detail.close();
-      await page.waitForSelector('.pool-location');
+      await click(page, 'Choose location');
       const coords = await page.$$('.pool-finder input[type=number]');
       for (const [i, value] of [newCustomerPin[1], newCustomerPin[0]].entries()) {
         await coords[i].evaluate((input, value) => {
@@ -149,48 +141,42 @@ test('three customers see a private visit sequence, follow the technician throug
           input.dispatchEvent(new Event('input', { bubbles: true }));
         }, value);
       }
-      await click(page, 'Save pin for nearby pools and invitations');
-      await page.waitForFunction(() => document.body.innerText.includes('Location saved for nearby pools'));
+      await click(page, 'Save location');
+      await page.waitForFunction(() => document.body.innerText.includes('Service location saved'));
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('.pool-nearby .pool-join');
-      assert.ok(await page.$eval('.pool-nearby .pool-join', el => el.textContent.includes('Join pool')));
     }
     const value = service.id + '/AC service';
     await page.waitForSelector('option[value="' + value + '"]');
     await page.select('form select', value);
     if (index === 0) {
-      firstWindow = await page.$eval('input[type=datetime-local]', input => input.value);
+      await page.click('summary::-p-text(More booking options)');
       const individualUrl = await page.$eval('a::-p-text(Book individually)', link => link.href);
       const individual = await page.browserContext().newPage();
       await individual.goto(individualUrl, { waitUntil: 'domcontentloaded' });
       await individual.waitForFunction(() => [...document.querySelectorAll('select')].some(el => el.value === 'individual')
         && [...document.querySelectorAll('select')].some(el => el.value === 'AC service'));
       await individual.close();
+    }
+    await page.$$eval('input[type=datetime-local]', (inputs, start) => {
+      for (const [i, value] of [start, start + 120 * 60000].entries()) {
+        const date = new Date(value);
+        const local = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[i], local);
+        inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }, +monday + (index === 2 ? 120 * 60000 : 0));
+    await click(page, 'Check visit price');
+    if (index === 2) {
+      await page.waitForSelector('input[name=shift]');
+      await page.click('input[name=shift]:not(:checked)');
+      await page.waitForFunction(() => document.body.innerText.includes('for ₹480'));
     } else {
-      await page.waitForFunction(price => document.body.innerText.includes(price + ' if you join'), {}, index === 1 ? '₹540' : '₹510');
+      await page.waitForFunction(price => document.body.innerText.includes(price + ' per visit'), {}, index ? '₹540' : '₹600');
     }
     if (index === 1) {
-      await page.$$eval('input[type=datetime-local]', (inputs, firstStart) => {
-        const end = new Date(firstStart);
-        const start = new Date(+end - 3600000);
-        for (const [i, date] of [start, end].entries()) {
-          const local = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[i], local);
-          inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
-        }
-      }, firstWindow);
-      await page.click('input[type=checkbox]');
-    }
-    await click(page, 'Find my best pool');
-    if (index === 1) {
-      await page.waitForFunction(() => document.body.innerText.includes('1h later'));
-      await page.click('input[name=visit-window]:not(:checked)');
-    }
-    await page.waitForFunction(price => document.body.innerText.includes(price + ' each after booking'), {}, ['₹600', '₹540', '₹510'][index]);
-    if (index === 1) {
-      await page.waitForFunction(() => document.body.innerText.includes('Save ₹60 (10%)'));
+      await page.click('summary::-p-text(More booking options)');
       await page.click('summary::-p-text(Watch for a price)');
-      await page.type('details input[type=number]', '540');
+      await page.type('details[open] form input[type=number]', '540');
       await click(page, 'Save price watch');
       await page.waitForFunction(() => document.body.innerText.includes('Watch saved.'));
       await notifyMatchingWatches();
@@ -198,30 +184,24 @@ test('three customers see a private visit sequence, follow the technician throug
       await inbox.goto(origin + '/notifications', { waitUntil: 'domcontentloaded' });
       const alert = await inbox.waitForSelector('a[href*="watch=1"]');
       await alert.click();
-      await inbox.waitForFunction(() => document.body.innerText.includes('₹540 after joining'));
+      await click(inbox, 'Check matching price');
+      await inbox.waitForFunction(() => document.body.innerText.includes('₹540 per person'));
       await inbox.close();
     }
-    if (!index) await page.type('input[placeholder="No limit · keep my visit"]', '550');
-    await click(page, index ? 'Confirm pooled booking' : 'Start a pool');
+    if (!index) {
+      await page.click('summary::-p-text(Set a maximum price)');
+      await page.type('input[placeholder="No limit · keep my visit"]', '550');
+    }
+    await click(page, 'Confirm booking');
     await page.waitForFunction(() => location.pathname.startsWith('/bookings/'));
     await page.goto(origin, { waitUntil: 'domcontentloaded' });
     if (!index) {
-      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 each') && document.body.innerText.includes('One more neighbour') && document.body.innerText.includes('₹550'));
-      await click(page, 'Edit lock cutoff');
-      await page.$eval('input[type=datetime-local]', input => {
-        const date = new Date(new Date(input.value).getTime() - 5 * 60000);
-        const value = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-      });
-      await click(page, 'Save cutoff');
-      await page.waitForFunction(() => document.body.innerText.includes('Joining deadline updated.'));
+      await page.waitForFunction(() => document.body.innerText.includes('1 member · ₹600 for your visit') && document.body.innerText.includes('₹550'));
     }
   }
-  await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 each'));
+  await customers[0].waitForFunction(() => document.body.innerText.includes('3 members · ₹510 for your visit'));
+  await runPoolLockSweep({ dispatch: true });
   const tech = await login({ email: 'technician@registration.example' });
-  await tech.waitForFunction(() => document.body.innerText.includes('/hour estimated gross'));
-  await click(tech, 'Claim job');
   for (const page of customers) {
     assert.equal(await page.$('[aria-label="Visit route"]'), null);
   }

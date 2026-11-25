@@ -19,7 +19,7 @@ export const nearbyPools = asyncHandler(async (req, res) => {
     throw new AppError(400, 'Choose a search range between 100 m and 1 km.', 'INVALID_RADIUS');
   }
   const pools = await ServicePool.find({
-    status: 'forming', lockCutoffTime: { $gt: new Date() },
+    automaticDispatch: { $ne: true }, status: 'forming', lockCutoffTime: { $gt: new Date() },
     centroidLocation: { $geoWithin: { $centerSphere: [point.coordinates, radius / 6371] } },
     ...(poolId && { _id: poolId }), ...(serviceCategoryId && { serviceCategoryId }),
     ...(specificService && { specificService }),

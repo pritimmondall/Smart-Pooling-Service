@@ -229,7 +229,7 @@ export default function BookingDetailPage() {
         <div className="flex items-center gap-2">
           {isPending && (
             <>
-              {!booking.poolScope && <button
+              {!booking.poolScope && !booking.automaticDispatch && <button
                 type="button"
                 onClick={() => setEditModalOpen(true)}
                 className="glass-button-secondary text-xs px-3.5 py-2 font-medium"
@@ -301,6 +301,7 @@ export default function BookingDetailPage() {
           </div>
         </div>
 
+        {booking.acceptedShift?.acceptedAt && <p className="text-sm">Time change accepted · ₹{(booking.acceptedShift.creditPaise / 100).toFixed(2)} flexibility discount included.</p>}
         {booking.closingPriceLimit != null && <p className="text-sm">Your closing price limit · ₹{booking.closingPriceLimit}</p>}
 
         {!booking.poolScope && booking.routeSavings?.provider && (
@@ -480,7 +481,7 @@ export default function BookingDetailPage() {
                 Your Payable Price
               </span>
               <span className="text-lg font-extrabold text-slate-900 mt-1 block">
-                ₹{pool.pricing?.finalPricePerMember || booking.estimatedPrice}
+                ₹{booking.estimatedPrice}
               </span>
               <span className="text-[10px] text-emerald-600 font-medium">
                 {pool.status === 'locked' ? 'Confirmed price' : 'Estimated pooled rate'}
@@ -492,7 +493,7 @@ export default function BookingDetailPage() {
                 Your Direct Savings
               </span>
               <span className="text-lg font-extrabold mt-1 block">
-                ₹{pool.pricing?.totalSavingsPerMember || 0}
+                ₹{((pool.pricing?.totalSavingsPaise || 0) / 100 + (booking.acceptedShift?.creditPaise || 0) / 100).toFixed(2)}
               </span>
               <span className="text-[10px] text-emerald-100">
                 Saved by pooling together

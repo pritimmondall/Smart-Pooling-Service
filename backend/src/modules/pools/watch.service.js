@@ -21,7 +21,8 @@ export async function notifyMatchingWatches(now = new Date()) {
           userId: watch.customerId, role: 'customer', type: 'pool', relatedEntityId: candidate.pool._id,
           title: 'Your price watch found a pool',
           message: `${watch.specificService} is available at ₹${finalPricePerMember} if you join. Review the current offer.`,
-          invitation: { serviceCategoryId: category._id, start, end: watch.end, lat, lng, fromWatch: true },
+          invitation: { serviceCategoryId: category._id, start, end: watch.end, lat, lng, fromWatch: true,
+            automaticDispatch: watch.automaticDispatch, specificService: watch.specificService },
         }], { session });
       }, { requireTransaction: true });
       break;

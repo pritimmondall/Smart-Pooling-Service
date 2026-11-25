@@ -53,14 +53,14 @@ export default function DashboardBooking() {
     {error && <p role="status">Booking updates unavailable. {error}</p>}
     {booking && <>
       <h2 className="font-bold text-lg">{completed ? 'Confirm your visit' : 'Your next booking'} · {booking.service}</h2>
-      <p aria-live="polite" className="font-semibold">{booking.pool && `${booking.pool.members} ${booking.pool.members === 1 ? 'member' : 'members'} · `}₹{booking.price}{booking.pool ? ' each' : ''}</p>
+      <p aria-live="polite" className="font-semibold">{booking.pool && `${booking.pool.members} ${booking.pool.members === 1 ? 'member' : 'members'} · `}₹{booking.price}{booking.pool?.automaticDispatch ? ' for your visit' : booking.pool ? ' each' : ''}</p>
       {booking.closingPriceLimit != null && <p>Closing price limit · ₹{booking.closingPriceLimit}</p>}
       {forming ? <div><p>Pool forming · Joining closes {when(booking.pool.deadline)}</p>
         {booking.pool.canEditCutoff && <PoolCutoffEditor key={booking.pool.id} poolId={booking.pool.id} cutoff={booking.pool.deadline}
           serviceStart={booking.window.start} onSaved={deadline => setBooking(current => current?.pool?.id === booking.pool.id
             ? { ...current, pool: { ...current.pool, deadline } } : current)}/>}
         {booking.pool.nextPrice < booking.price && booking.pool.nextPrice != null && <p>One more neighbour brings your price to <strong>₹{booking.pool.nextPrice} each</strong>.</p>}
-        <button type="button" className="pool-secondary" onClick={share}>Invite a neighbour</button>
+        {!booking.pool.automaticDispatch && <button type="button" className="pool-secondary" onClick={share}>Invite a neighbour</button>}
         {invite?.id === booking.id && (invite.copied ? <p role="status">Invitation link copied.</p> : <input aria-label="Invitation link" readOnly value={invite.url} onFocus={e => e.target.select()}/>)}
       </div> : <>
         <p>{STATUS_LABELS[booking.status]} · {when(booking.window.start)} – {when(booking.window.end)}</p>

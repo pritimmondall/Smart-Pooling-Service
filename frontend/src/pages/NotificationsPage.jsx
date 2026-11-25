@@ -117,13 +117,14 @@ export default function NotificationsPage() {
                         <span>•</span>
                         <Link
                           to={n.role === 'technician' ? (['pool', 'opportunity'].includes(n.type) ? `/technician/dashboard?work=${n.relatedEntityId}` : '/technician/dashboard') : n.invitation?.serviceCategoryId ? `/create-booking?${new URLSearchParams({
-                            poolId: n.relatedEntityId, serviceId: n.invitation.serviceCategoryId,
+                            ...(n.invitation.automaticDispatch ? { service: n.invitation.specificService } : { poolId: n.relatedEntityId }),
+                            serviceId: n.invitation.serviceCategoryId,
                             start: n.invitation.start, end: n.invitation.end,
                             ...(n.invitation.fromWatch && { watch: 1, lat: n.invitation.lat, lng: n.invitation.lng }),
                           })}` : `/bookings/${n.relatedEntityId}`}
                           className="font-medium text-emerald-700 hover:text-emerald-800 flex items-center gap-1"
                         >
-                          {n.role === 'technician' ? (n.type === 'pool' ? 'View pool' : 'View work') : n.invitation?.serviceCategoryId ? 'Review and join pool' : 'View Related Booking'} <ExternalLink className="w-3 h-3" />
+                          {n.role === 'technician' ? (n.type === 'pool' ? 'View pool' : 'View work') : n.invitation?.serviceCategoryId ? 'Review booking options' : 'View Related Booking'} <ExternalLink className="w-3 h-3" />
                         </Link>
                       </>
                     )}

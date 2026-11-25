@@ -1,4 +1,4 @@
-import { ServicePool, Notification } from '../../models/index.js';
+import { ServicePool, Booking, Notification } from '../../models/index.js';
 import { settleClosingLimits } from './matching.service.js';
 import { runInTransaction } from '../../config/db.js';
 
@@ -131,13 +131,14 @@ async function dispatchPoolLockNotifications(pool, session) {
     }).session(session);
 
     if (!existingNotif) {
+      const booking = pool.automaticDispatch && await Booking.findById(member.bookingId, 'estimatedPrice').session(session);
       await Notification.create(
         [
           {
             userId: member.customerId,
             role: 'customer',
             title,
-            message: isMultiMember
+            message: booking ? `Your visit price is confirmed at ₹${booking.estimatedPrice}. SmartPool is finding an available technician.` : isMultiMember
               ? `Great news! Your service pool is locked with ${activeMembers.length} members. Your pooled discount is confirmed at ${pool.pricing.discountPercentage}% (₹${pool.pricing.finalPricePerMember}).`
               : `Your service pool window has closed. As the sole member, your service will proceed at the standard rate.`,
             type: 'booking',

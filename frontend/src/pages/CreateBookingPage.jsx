@@ -5,10 +5,16 @@ import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 import useNearbyPools from '../components/common/useNearbyPools.js';
 
+import TimeShiftOffer from '../components/common/TimeShiftOffer.jsx';
 import ClosingPriceLimit from '../components/common/ClosingPriceLimit.jsx';
 
 const panel = 'glass-panel rounded-3xl p-6 space-y-4';
 const input = 'glass-input w-full';
+function initialTime(value, offset) {
+  if (value && Number.isFinite(Date.parse(value))) return localInput(new Date(value));
+  return localInput(new Date(Date.now() + offset));
+}
+
 function localInput(date) {
   return new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
 }
@@ -27,7 +33,7 @@ export default function CreateBookingPage() {
   const [scopes, setScopes] = useState({});
   const [domain, setDomain] = useState('');
   const [specific, setSpecific] = useState('');
-  const [mode, setMode] = useState(!invited && params.get('mode') === 'individual' ? 'individual' : 'pool');
+  const [mode, setMode] = useState(!invited && params.get('mode') === 'individual' ? 'individual' : invited || params.get('mode') === 'pool' ? 'pool' : 'automatic');
   const [scope, setScope] = useState('200m');
   const [building, setBuilding] = useState('');
   const [choice, setChoice] = useState('');
@@ -53,8 +59,8 @@ export default function CreateBookingPage() {
   const [finding, setFinding] = useState(false);
   const [pinConfirmed, setPinConfirmed] = useState(Boolean(invitedLocation || saved));
   const [lookup, setLookup] = useState('');
-  const [start, setStart] = useState(() => params.get('start') || localInput(new Date(Date.now()+86400000)));
-  const [end, setEnd] = useState(() => params.get('end') || localInput(new Date(Date.now()+100800000)));
+  const [start, setStart] = useState(() => initialTime(params.get('start'), 86400000));
+  const [end, setEnd] = useState(() => initialTime(params.get('end'), 100800000));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -79,6 +85,8 @@ export default function CreateBookingPage() {
   const quoteKey = JSON.stringify([mode, category?._id, specific, coords.lat, coords.lng, start, end]);
   const [preview, setPreview] = useState(null);
   const quote = preview?.key === quoteKey ? preview.data : null;
+  const [acceptShift, setAcceptShift] = useState(false);
+  const offer = acceptShift && quote?.shiftOffer;
   const individual = mode === 'individual';
   async function findAddress() {
     setFinding(true); setLookup('');
@@ -106,7 +114,8 @@ export default function CreateBookingPage() {
     setBusy(true);
     try {
       if (automatic && !quote) {
-        const result = await bookingsApi.quote({
+        setAcceptShift(false);
+        const result = await bookingsApi.quote({ automaticDispatch: true,
           serviceCategoryId: category._id, specificService: specific, location: coords,
           timeWindow: { start: new Date(start), end: new Date(end) },
         });
@@ -118,7 +127,7 @@ export default function CreateBookingPage() {
         bookingMode: automatic ? 'pool' : mode, location: coords, addressText: address.trim() || `Map pin ${coords.lat}, ${coords.lng}`,
         ...(!individual && limit && { closingPriceLimit: Number(limit) }),
         ...(invited && params.get('watch') === '1' && { watchWindow: { start: new Date(Math.max(Date.now() + 60000, Date.parse(params.get('start')))), end: params.get('end') } }),
-        notes, ...(automatic && { quotedPrice: quote.finalPricePerMember }), ...(individual || automatic ? { timeWindow: { start: new Date(start), end: new Date(end) } } :
+        notes, ...(automatic && { automaticDispatch: true, quotedPrice: offer ? offer.price : quote.finalPricePerMember, ...(offer && { acceptShift: offer }) }), ...(individual || automatic ? { timeWindow: { start: new Date(start), end: new Date(end) } } :
           { ...(targetId ? { targetPoolId: targetId, quotedPrice: target.price } : { poolScope: scope }), ...(needsBuilding && { building }) }),
       });
       navigate(`/bookings/${res.data._id}`, { state: { flashMessage: res.message } });
@@ -130,7 +139,7 @@ export default function CreateBookingPage() {
     : targetId ? 'Join pool' : 'Create pool';
 
   return <form onSubmit={submit} className="max-w-3xl mx-auto space-y-5">
-    <h1 className="text-2xl font-bold">{invited ? 'Join a nearby pool' : 'Manual booking'}</h1>
+    <h1 className="text-2xl font-bold">{invited ? 'Join a nearby pool' : 'Book a service'}</h1>
     {!invited && <section className={panel}>
       <label className="block">Service domain<select className={input} required value={domain} onChange={e => {setDomain(e.target.value); setSpecific(''); setChoice('');}}>
         <option value="">Choose domain</option>{[...new Set(catalog.map(c=>c.domain))].map(d=><option key={d}>{d}</option>)}</select></label>
@@ -164,11 +173,12 @@ export default function CreateBookingPage() {
         <label className="block">Visit instructions (optional)<input className={input} maxLength={500} value={notes} onChange={e=>setNotes(e.target.value)}/></label>
       </section>
       <div className={panel}>
-        <p className="font-semibold">₹{quote?.finalPricePerMember ?? target?.price ?? category?.baseIndividualPrice} {automatic && !quote ? 'individual price' : 'per person'}</p>
-        {quote && <p role="status">{quote.memberCount === 1 ? 'Your booking would start a new pool.' :
+        <p className="font-semibold">₹{(offer ? offer.price : quote?.finalPricePerMember) ?? target?.price ?? category?.baseIndividualPrice} {automatic && !quote ? 'individual price' : 'per person'}</p>
+        {quote && <TimeShiftOffer offer={quote.shiftOffer} accepted={acceptShift} onChange={setAcceptShift}/>}
+        {quote && !offer && <p role="status">{quote.memberCount === 1 ? 'Your booking would start a new pool.' :
           `Matching pool · ${quote.memberCount} members including you · save ₹${quote.totalSavingsPerMember} each (${quote.discountPercentage}%)`}</p>}
         {quote?.recommendedMatch && <p className="text-sm">Pool centre {quote.recommendedMatch.distanceMeters} m away · {quote.recommendedMatch.overlapMinutes} minutes of shared availability</p>}
-        {!individual && !targetId && <p className="text-sm">The price decreases for everyone as neighbors join.</p>}
+        {!individual && !targetId && <p className="text-sm">SmartPool groups nearby visits and assigns an available technician when the pool closes. The group rate depends on the final number of bookings.</p>}
         {!individual && <ClosingPriceLimit value={limit} onChange={setLimit}/>}
         <button disabled={busy || finding || (!category && !target) || Boolean(targetId && !target)} className="glass-button-primary px-5 py-3">
           {busy ? 'Please wait…' : submitLabel}</button>

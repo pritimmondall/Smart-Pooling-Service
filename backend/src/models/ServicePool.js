@@ -58,6 +58,7 @@ const poolMemberSchema = new mongoose.Schema(
 const servicePoolSchema = new mongoose.Schema(
   {
     specificService: { type: String, maxlength: 100 },
+    automaticDispatch: { type: Boolean, default: false },
     poolScope: { type: String, enum: ['building', '200m', '500m', '1km'] },
     buildingKey: { type: String, maxlength: 160 },
     serviceCategoryId: {

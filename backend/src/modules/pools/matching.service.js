@@ -10,7 +10,7 @@ import {
 } from '../../models/index.js';
 import { runInTransaction } from '../../config/db.js';
 import { haversineDistanceKm, toGeoJSONPoint } from '../../utils/geo.js';
-import { calculatePoolPricing } from './pricing.service.js';
+import { calculatePoolPricing, shiftedFare } from './pricing.service.js';
 import { AppError } from '../../utils/appError.js';
 
 import { poolScopes } from './poolOptions.js';
@@ -118,7 +118,7 @@ export async function findCompatiblePools({
   location,
   timeWindow,
   customerId,
-  targetPoolId, specificService, buildingKey,
+  targetPoolId, specificService, buildingKey, automaticDispatch = false, allowShift = false,
   session = null,
 }) {
   const now = new Date();
@@ -133,7 +133,7 @@ export async function findCompatiblePools({
 
   // Query forming pools whose cutoff has not expired and centroid is within radius
   const query = ServicePool.find({
-    ...(targetPoolId ? { _id: targetPoolId } : { poolScope: null }),
+    ...(targetPoolId ? { _id: targetPoolId } : { poolScope: null, automaticDispatch: automaticDispatch ? true : { $ne: true } }),
     serviceCategoryId: category._id,
     status: 'forming',
     lockCutoffTime: { $gt: now },
@@ -164,18 +164,18 @@ export async function findCompatiblePools({
       continue;
     }
 
-    // 2. Time-window strict interval intersection
-    const intersection = computeIntervalIntersection(pool.aggregateTimeWindow, timeWindow);
-    if (!intersection) {
-      continue;
-    }
-
-    // Minimum required duration check (pool intersection must comfortably accommodate service duration)
-    const overlapDurationMs = intersection.end.getTime() - intersection.start.getTime();
-    const minRequiredMs = (category.estimatedDurationMins || 30) * 60 * 1000;
-    if (overlapDurationMs < minRequiredMs) {
-      continue;
-    }
+    const count = activeMembers.length + 1;
+    const serviceMinutes = category.estimatedDurationMins || 30;
+    const minRequiredMs = (pool.automaticDispatch ? count * serviceMinutes + (count - 1) * 10 : serviceMinutes) * 60000;
+    const earliestShift = +pool.aggregateTimeWindow.start + minRequiredMs - +timeWindow.end;
+    const latestShift = +pool.aggregateTimeWindow.end - minRequiredMs - +timeWindow.start;
+    const shift = allowShift ? Math.max(earliestShift, Math.min(0, latestShift)) : 0;
+    const offeredWindow = { start: new Date(+timeWindow.start + shift), end: new Date(+timeWindow.end + shift) };
+    if (allowShift && (!shift || Math.abs(shift) > 2 * 3600000 || offeredWindow.start <= now)) continue;
+    const intersection = computeIntervalIntersection(pool.aggregateTimeWindow, offeredWindow);
+    if (!intersection) continue;
+    const overlapDurationMs = +intersection.end - +intersection.start;
+    if (overlapDurationMs < minRequiredMs) continue;
 
     // 3. Pairwise clique proximity: booking must be within radius of every existing member
     let allMembersWithinRadius = true;
@@ -207,6 +207,7 @@ export async function findCompatiblePools({
       pool,
       score,
       distanceKm: distToCentroid,
+      offeredWindow,
       newIntersection: intersection,
       activeMembersCount: activeMembers.length,
     });
@@ -301,7 +302,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     serviceCategoryId: booking.serviceCategoryId,
     location: booking.location,
     customerId: booking.customerId,
-    specificService: booking.specificService, buildingKey: booking.buildingKey, targetPoolId,
+    automaticDispatch: booking.automaticDispatch, specificService: booking.specificService, buildingKey: booking.buildingKey, targetPoolId,
     timeWindow: booking.timeWindow,
     session,
   });
@@ -392,6 +393,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     joinedPool.centroidLocation = newCentroid;
     joinedPool.aggregateTimeWindow = { start: aggregateStart, end: aggregateEnd };
     joinedPool.lockCutoffTime = newLockCutoff;
+    await priceMembers(activeBookings, newPricing, session);
     joinedPool.pricing = newPricing;
 
     // Auto-lock if pool reached maximum capacity
@@ -425,19 +427,12 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
 
     // Update current booking reference and price
     booking.poolId = joinedPool._id;
-    booking.estimatedPrice = newPricing.finalPricePerMember;
+    booking.estimatedPrice = shiftedFare(newPricing, booking.acceptedShift?.bonusPercentage).payable;
     await booking.save({ session });
 
     if (injectFailureAt === 'after_booking_update') {
       throw new Error('Simulated failure after_booking_update');
     }
-
-    // Update estimated price for all other active bookings in this pool
-    await Booking.updateMany(
-      { poolId: joinedPool._id, status: 'pending' },
-      { estimatedPrice: newPricing.finalPricePerMember },
-      { session }
-    );
 
     if (joinedPool.status === 'locked') {
       joinedPool = await settleClosingLimits(joinedPool, session);
@@ -502,7 +497,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
         serviceCategoryId: category._id,
         zoneId: booking.zoneId || null,
         status: 'forming',
-        specificService: booking.specificService, poolScope: booking.poolScope, buildingKey: booking.buildingKey,
+        automaticDispatch: booking.automaticDispatch, specificService: booking.specificService, poolScope: booking.poolScope, buildingKey: booking.buildingKey,
         maxCapacity: poolScopes[booking.poolScope]?.capacity || category.maxPoolSize || 4,
         poolRadiusKm: poolScopes[booking.poolScope]?.radiusKm || POOL_RADIUS_KM,
         centroidLocation: booking.location,
@@ -573,7 +568,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     { session }
   );
 
-  if (initialCutoff > new Date()) {
+  if (!booking.automaticDispatch && initialCutoff > new Date()) {
     await notifyTechniciansOfNewPool(newPool, booking.specificService || category.name, session);
     const recipients = await User.find({
       _id: { $ne: booking.customerId }, role: 'customer', isActive: true,
@@ -668,6 +663,7 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
       basePrice,
       memberCount: remainingActiveMembers.length,
     });
+    await priceMembers(remainingBookings, newPricing, session);
     pool.pricing = newPricing;
 
     // If pool was locked due to capacity and dropped below maxCapacity, reopen if before cutoff
@@ -677,12 +673,7 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
 
     await pool.save({ session });
 
-    // Update remaining bookings' estimated prices
-    await Booking.updateMany(
-      { poolId: pool._id, status: 'pending' },
-      { estimatedPrice: newPricing.finalPricePerMember },
-      { session }
-    );
+
   }
 
   booking.poolId = null;
@@ -692,11 +683,24 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
   return pool;
 }
 
+async function priceMembers(bookings, pricing, session) {
+  const updates = bookings.map(booking => {
+    const bonus = booking.acceptedShift?.bonusPercentage;
+    const { payable, creditPaise } = shiftedFare(pricing, bonus);
+    pricing.poolTotalPaise -= creditPaise;
+    return { updateOne: { filter: { _id: booking._id }, update: { $set: {
+      estimatedPrice: payable, ...(bonus && { 'acceptedShift.creditPaise': creditPaise }),
+    } } } };
+  });
+  pricing.poolTotal = pricing.poolTotalPaise / 100;
+  await Booking.bulkWrite(updates, { session });
+}
+
 // Removing one member can raise the price for the remaining members. Recheck until stable.
 export async function settleClosingLimits(pool, session) {
   while (pool.status !== 'cancelled') {
     const overLimit = await Booking.findOne({ poolId: pool._id, status: { $in: ['pending', 'confirmed'] },
-      closingPriceLimit: { $type: 'number', $lt: pool.pricing.finalPricePerMember } }).session(session);
+      closingPriceLimit: { $type: 'number' }, $expr: { $gt: ['$estimatedPrice', '$closingPriceLimit'] } }).session(session);
     if (!overLimit) break;
     pool = await removeBookingFromPool(overLimit._id, session, true);
     await Booking.updateOne({ _id: overLimit._id }, { $set: { status: 'cancelled', cancelledAt: new Date() } }, { session });
@@ -708,6 +712,13 @@ export async function settleClosingLimits(pool, session) {
   if (pool.status !== 'cancelled' && pool.status !== 'locked') {
     pool.status = 'locked';
     await pool.save({ session });
+  }
+  if (pool.automaticDispatch && pool.status === 'locked') {
+    await Booking.updateMany(
+      { poolId: pool._id, status: 'pending' },
+      { $set: { status: 'confirmed' } },
+      { session }
+    );
   }
   return pool;
 }

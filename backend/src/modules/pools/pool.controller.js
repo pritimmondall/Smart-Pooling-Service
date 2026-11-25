@@ -123,7 +123,7 @@ export const updateLockCutoff = asyncHandler(async (req, res) => {
     throw new AppError(400, 'Choose a cutoff in the future.', 'INVALID_CUTOFF');
   }
   const founder = {
-    _id: req.params.id, 'members.0.customerId': req.user._id,
+    automaticDispatch: { $ne: true }, _id: req.params.id, 'members.0.customerId': req.user._id,
     members: { $elemMatch: { customerId: req.user._id, status: 'active' } },
   };
   const pool = await ServicePool.findOne(founder).select('status lockCutoffTime aggregateTimeWindow');

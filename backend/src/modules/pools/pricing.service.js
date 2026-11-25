@@ -255,3 +255,12 @@ export function calculatePoolPricing({
     calculatedAt: new Date().toISOString(),
   };
 }
+
+export const SHIFT_BONUS_PERCENTAGE = 5;
+
+// Apply an accepted flexibility bonus to the base fare, within the existing discount cap.
+export function shiftedFare(pricing, bonusPercentage = 0) {
+  const totalPercent = Math.min(MAX_DISCOUNT_PERCENTAGE, pricing.discountPercentage + bonusPercentage);
+  const payablePaise = pricing.basePricePaise - Math.floor(pricing.basePricePaise * totalPercent / 100);
+  return { payable: toRupees(payablePaise), creditPaise: pricing.finalPricePaise - payablePaise };
+}
