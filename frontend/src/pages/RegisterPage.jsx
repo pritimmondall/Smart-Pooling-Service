@@ -203,7 +203,7 @@ export default function RegisterPage() {
 
             {role === 'technician' && <fieldset className="space-y-2">
               <legend className="text-sm font-semibold text-slate-800">Work location</legend>
-              <p className="text-xs text-slate-600">Select your base on the map or choose a quick zone. Next, choose your service fields and working hours. An admin must approve your account before you can claim work.</p>
+              <p className="text-xs text-slate-600">Select your base on the map or choose a quick zone. Next, choose your service fields and working hours. After saving your work profile, set your availability to Available to receive assignments.</p>
               <LocationPickerMap value={baseLocation} onChange={setBaseLocation} height="200px"/>
             </fieldset>}
 

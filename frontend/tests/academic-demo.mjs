@@ -24,7 +24,6 @@ test('three customers see a private visit sequence, follow the technician throug
     name, email: name.toLowerCase() + '@demo.example', passwordHash: password, role: 'customer',
     poolAlertLocation: { type: 'Point', coordinates: [88.3531, 22.5015 + i * 0.0007] },
   })));
-  const admin = await User.create({ name: 'Reviewer', email: 'reviewer@test.example', passwordHash: password, role: 'admin' });
   const newCustomerPin = [88.3531, 22.5018];
   const customerAccounts = [neighbors[0], { email: 'customer@registration.example' }, neighbors[1]];
   const pins = [Array.from(neighbors[0].poolAlertLocation.coordinates), newCustomerPin, Array.from(neighbors[1].poolAlertLocation.coordinates)];
@@ -68,19 +67,13 @@ test('three customers see a private visit sequence, follow the technician throug
         assert.equal(user.role, role);
         const profile = await TechnicianProfile.findOne({ userId: user._id });
         if (role === 'technician') {
-          assert.equal(profile.approvalStatus, 'pending');
+          assert.equal(profile.approvalStatus, 'approved');
+          assert.equal(profile.availabilityStatus, 'offline');
           assert.equal(profile.serviceRadiusKm, 14);
           assert.deepEqual(Array.from(profile.workingHours.daysOfWeek), [1, 2, 3, 4, 5]);
           assert.deepEqual(profile.serviceCategories.map(String), [service.id]);
           assert.deepEqual(Array.from(profile.baseLocation.coordinates), [88.3639, 22.5176]);
           assert.match(await page.title(), /Technician dashboard/);
-          await page.waitForFunction(() => document.body.innerText.includes('awaiting admin approval'));
-          assert.equal(await page.$eval('option[value=available]', el => el.disabled), true);
-          const reviewer = await login(admin);
-          await click(reviewer, 'Approve technician');
-          await reviewer.waitForFunction(() => document.body.innerText.includes('New technician · approved'));
-          await reviewer.browserContext().close();
-          await page.reload({ waitUntil: 'domcontentloaded' });
           await page.waitForFunction(() => document.querySelector('option[value=available]')?.disabled === false);
           await page.select('select[aria-label="Work availability"]', 'available');
           await page.waitForFunction(() => document.querySelector('.desk-dot.available'));

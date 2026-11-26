@@ -29,7 +29,7 @@ Open [SmartPool](http://localhost:5001). Express serves both the built frontend 
 2. Open **Book a visit**, choose a specific service, confirm the address or pin, and enter the earliest start and latest finish. The form shows the service duration and quotes the requested window first.
 3. Review the fare and savings. If a cheaper group needs a time change of up to two hours, the form shows one alternative. The requested window is selected by default. A changed or expired quote requires another confirmation.
 4. Confirmation places even a single visit in the dispatch queue. The worker runs at startup and every 30 seconds. A nearby customer can join a feasible assigned or accepted route later. Five minutes after confirmation, a customer still awaiting assignment can keep waiting or quote a replacement window. Confirming a replacement cancels the waiting booking in the same transaction.
-5. Sign in with `tech.ac@smartpool.demo` and password `TechDemo123!` for the seeded AC service. Set availability, accept an assignment, then use **On the way**, **Mark Arrived**, **Start Service** and **Complete Service**. Declining before arrival releases the assignment for another technician.
+5. Sign in with `tech.ac@smartpool.demo` and password `TechDemo123!` for the seeded AC service. Alternatively, register a new technician, choose service fields and working hours, and save the work profile. New technician registrations are automatically approved. Set **Work availability → Available**, accept an assignment, then use **On the way**, **Mark Arrived**, **Start Service** and **Complete Service**. Declining before arrival releases the assignment for another technician.
 
 ## Visit tracking
 

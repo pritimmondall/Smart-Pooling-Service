@@ -415,7 +415,7 @@ export default function TechnicianDashboard() {
     <p>{error || 'Your technician profile could not be loaded.'}</p>
     <button className="underline" onClick={() => fetchData()}>Retry</button>
   </div>;
-  if (profile.approvalStatus === 'pending' && !profile.serviceCategories.length && !activeCount) {
+  if (profile.approvalStatus !== 'rejected' && !profile.serviceCategories.length && !activeCount) {
     return <Navigate to="/technician/profile-setup" replace/>;
   }
   const workNotice = profile.approvalStatus === 'pending' ? 'Your work profile is awaiting admin approval. You can go available after it is approved.' :

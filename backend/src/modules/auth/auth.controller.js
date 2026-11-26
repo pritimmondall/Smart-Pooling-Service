@@ -102,7 +102,7 @@ export const register = asyncHandler(async (req, res) => {
               serviceCategories: serviceCategories || [],
               ...(serviceRadiusKm !== undefined ? { serviceRadiusKm } : {}),
               ...(maxPoolCapacity !== undefined ? { maxPoolCapacity } : {}),
-              approvalStatus: 'pending',
+              approvalStatus: 'approved',
               availabilityStatus: 'offline',
             },
           ],

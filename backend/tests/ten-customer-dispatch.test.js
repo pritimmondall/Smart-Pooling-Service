@@ -7,7 +7,6 @@ import app from '../src/app.js';
 import { connectDB, disconnectDB } from '../src/config/db.js';
 import { env } from '../src/config/env.js';
 import { Booking, User, ServiceCategory, ServicePool } from '../src/models/index.js';
-import { signAuthToken } from '../src/middleware/auth.js';
 import { runPoolLockSweep } from '../src/modules/pools/poolWorker.js';
 import { MockRoadRoutingProvider } from '../src/modules/routing/providers/mockRoadRoutingProvider.js';
 
@@ -37,7 +36,6 @@ test('ten customer visits across five technician specialties', async t => {
     return result.data;
   }
 
-  const admin = signAuthToken(await User.create({ name: 'Test administrator', email: 'admin@example.test', passwordHash: randomUUID(), role: 'admin' }));
   const categories = await ServiceCategory.create([
     ['AC service', 'ac-service', 600], ['Appliances', 'appliance-repair', 700],
     ['Electrical', 'electrical', 500], ['Plumbing', 'plumbing', 400], ['Cleaning', 'home-cleaning', 800],
@@ -54,7 +52,8 @@ test('ten customer visits across five technician specialties', async t => {
   ]) {
     const base = point(lng);
     const account = await register(name, 'technician', { baseLocation: base, serviceCategories: skills.map(i => categories[i].id), serviceRadiusKm: 10 });
-    await api('/technicians/' + account.technicianProfile._id + '/approval', 'PATCH', admin, { approvalStatus: 'approved' });
+    assert.equal(account.technicianProfile.approvalStatus, 'approved');
+    assert.equal(account.technicianProfile.availabilityStatus, 'offline');
     await api('/technicians/me/availability', 'PATCH', account.token, { availabilityStatus: 'available', workingHours: { start, end, daysOfWeek: [1] } });
     techs.push({ ...account, base });
   }
