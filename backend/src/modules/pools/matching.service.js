@@ -18,7 +18,18 @@ import { poolScopes } from './poolOptions.js';
 const POOL_RADIUS_KM = 0.2;
 const EARTH_RADIUS_KM = 6371;
 
-function effectiveCutoff(ownerCutoff, start, leadTimeMs) {
+// Leave time for the 30-second worker sweep and the assignment transaction.
+export const AUTO_POOL_FORMATION_MS = 4 * 60 * 1000;
+
+function effectiveCutoff(pool, start, leadTimeMs) {
+  const ownerCutoff = pool.ownerLockCutoffTime;
+  if (pool.automaticDispatch) {
+    return new Date(Math.min(
+      pool.lockCutoffTime?.getTime() ?? Infinity,
+      (pool.createdAt?.getTime() ?? Date.now()) + AUTO_POOL_FORMATION_MS,
+      start.getTime() - leadTimeMs
+    ));
+  }
   return ownerCutoff ? new Date(Math.min(ownerCutoff.getTime(), start.getTime())) : new Date(start.getTime() - leadTimeMs);
 }
 
@@ -379,7 +390,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     }
 
     const lockCutoffMs = (category.poolLockCutoffMins || 60) * 60 * 1000;
-    const newLockCutoff = effectiveCutoff(joinedPool.ownerLockCutoffTime, aggregateStart, lockCutoffMs);
+    const newLockCutoff = effectiveCutoff(joinedPool, aggregateStart, lockCutoffMs);
 
     if (injectFailureAt === 'during_pricing_recalc') {
       throw new Error('Simulated failure during_pricing_recalc');
@@ -478,9 +489,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
   );
 
   const lockCutoffMs = (category.poolLockCutoffMins || 60) * 60 * 1000;
-  const initialCutoff = new Date(
-    new Date(booking.timeWindow.start).getTime() - lockCutoffMs
-  );
+  const initialCutoff = effectiveCutoff(booking, booking.timeWindow.start, lockCutoffMs);
 
   if (injectFailureAt === 'during_pricing_recalc') {
     throw new Error('Simulated failure during_pricing_recalc');
@@ -656,7 +665,7 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
 
     const lockCutoffMs = ((category?.poolLockCutoffMins) || 60) * 60 * 1000;
     pool.aggregateTimeWindow = { start: aggregateStart, end: aggregateEnd };
-    pool.lockCutoffTime = effectiveCutoff(pool.ownerLockCutoffTime, aggregateStart, lockCutoffMs);
+    pool.lockCutoffTime = effectiveCutoff(pool, aggregateStart, lockCutoffMs);
 
     // Recalculate pricing for remaining members
     const newPricing = calculatePoolPricing({
