@@ -16,6 +16,7 @@ import userRoutes from './modules/users/user.routes.js';
 import serviceRoutes from './modules/services/service.routes.js';
 import zoneRoutes from './modules/zones/zone.routes.js';
 import technicianRoutes from './modules/technicians/technician.routes.js';
+import visitRoutes from './modules/bookings/visit.routes.js';
 import bookingRoutes from './modules/bookings/booking.routes.js';
 import poolRoutes from './modules/pools/pool.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
@@ -116,6 +117,7 @@ export function createApp() {
   app.use('/api/v1/technicians', technicianRoutes);
   app.use('/api/technician', technicianRoutes);
   app.use('/api/technicians', technicianRoutes);
+  app.use('/api/v1/visits', visitRoutes);
   app.use('/api/v1/bookings', bookingRoutes);
   app.use('/api/v1/pools', poolRoutes);
   app.use('/api/v1/notifications', notificationRoutes);

@@ -106,6 +106,11 @@ export const zonesApi = {
 };
 
 // Bookings API
+export const visitsApi = {
+  quote: data => api.post('/visits/quote', data),
+  create: data => api.post('/visits', data),
+};
+
 export const bookingsApi = {
   watches: () => api.get('/bookings/watches'),
   watch: data => api.post('/bookings/watches', data),
@@ -187,6 +192,7 @@ export const techniciansApi = {
     return api.get(`/technicians/me/jobs/${id}/route${query ? `?${query}` : ''}`);
   },
   getJobStops: (jobId) => api.get(`/technicians/me/jobs/${jobId}/stops`),
+  departJobStop: (jobId, stopId) => api.patch(`/technicians/me/jobs/${jobId}/stops/${stopId}/status`, { status: 'on_the_way' }),
   arriveJobStop: (jobId, stopId, data = {}) => api.post(`/technicians/me/jobs/${jobId}/stops/${stopId}/arrive`, data),
   startJobStop: (jobId, stopId) => api.post(`/technicians/me/jobs/${jobId}/stops/${stopId}/start`),
   completeJobStop: (jobId, stopId) => api.post(`/technicians/me/jobs/${jobId}/stops/${stopId}/complete`),

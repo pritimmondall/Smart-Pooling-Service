@@ -29,7 +29,7 @@ export default function DashboardBooking() {
   }, []);
 
   if (!booking && !error) return null;
-  const forming = booking?.pool?.status === 'forming';
+  const forming = !booking?.pool?.automaticDispatch && booking?.pool?.status === 'forming';
   const completed = booking?.status === 'completed';
   return <section aria-label="Your booking" className="pool-booking">
     {error && <p role="status">Booking updates unavailable. {error}</p>}
@@ -39,7 +39,7 @@ export default function DashboardBooking() {
       {booking.closingPriceLimit != null && <p>Closing price limit · ₹{booking.closingPriceLimit}</p>}
       {forming ? <p>Matching nearby visits until {when(booking.pool.deadline)}</p> : <>
         <p>{STATUS_LABELS[booking.status]} · {when(booking.window.start)} – {when(booking.window.end)}</p>
-        <p>{booking.technician ? `Technician · ${booking.technician}` : completed ? 'Visit completed' : 'Awaiting technician assignment'}</p>
+        <p>{booking.technician ? `Technician · ${booking.technician}` : completed ? 'Visit completed' : booking.waiting ? 'No technician available yet. Open your booking to keep waiting or change your window.' : 'Awaiting technician assignment'}</p>
         {booking.visitsAhead != null && <p aria-live="polite">{booking.visitsAhead === 0 ? 'Your visit is next' : `${booking.visitsAhead} ${booking.visitsAhead === 1 ? 'visit' : 'visits'} before yours`}</p>}
         {booking.estimatedStart && <p>Estimated visit · {when(booking.estimatedStart)}</p>}
       </>}

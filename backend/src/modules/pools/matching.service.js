@@ -1,5 +1,8 @@
+import { planVisitSchedule, planVisitInsertion, applyVisitSchedule } from '../routing/visitSchedule.service.js';
+import { recalculateTechnicianAvailability } from '../technicians/technicianAvailability.service.js';
 import { notifyTechniciansOfNewPool } from './formingPoolAlerts.service.js';
 import {
+  TechnicianProfile,
   Booking,
   ServiceCategory,
   ServicePool,
@@ -18,18 +21,10 @@ import { poolScopes } from './poolOptions.js';
 const POOL_RADIUS_KM = 0.2;
 const EARTH_RADIUS_KM = 6371;
 
-// Leave time for the 30-second worker sweep and the assignment transaction.
-export const AUTO_POOL_FORMATION_MS = 4 * 60 * 1000;
-
 function effectiveCutoff(pool, start, leadTimeMs) {
+  // Keep this legacy required field readable for older clients. Automatic dispatch and admission ignore it.
+  if (pool.automaticDispatch) return pool.lockCutoffTime || start;
   const ownerCutoff = pool.ownerLockCutoffTime;
-  if (pool.automaticDispatch) {
-    return new Date(Math.min(
-      pool.lockCutoffTime?.getTime() ?? Infinity,
-      (pool.createdAt?.getTime() ?? Date.now()) + AUTO_POOL_FORMATION_MS,
-      start.getTime() - leadTimeMs
-    ));
-  }
   return ownerCutoff ? new Date(Math.min(ownerCutoff.getTime(), start.getTime())) : new Date(start.getTime() - leadTimeMs);
 }
 
@@ -129,7 +124,7 @@ export async function findCompatiblePools({
   location,
   timeWindow,
   customerId,
-  targetPoolId, specificService, buildingKey, automaticDispatch = false, allowShift = false,
+  bookingId, targetPoolId, excludePoolIds, specificService, buildingKey, automaticDispatch = false, allowShift = false,
   session = null,
 }) {
   const now = new Date();
@@ -144,10 +139,14 @@ export async function findCompatiblePools({
 
   // Query forming pools whose cutoff has not expired and centroid is within radius
   const query = ServicePool.find({
-    ...(targetPoolId ? { _id: targetPoolId } : { poolScope: null, automaticDispatch: automaticDispatch ? true : { $ne: true } }),
+    automaticDispatch: automaticDispatch ? true : { $ne: true },
+    ...(targetPoolId ? { _id: targetPoolId } : { poolScope: null }),
+    ...(excludePoolIds?.length && { _id: { $nin: excludePoolIds } }),
     serviceCategoryId: category._id,
-    status: 'forming',
-    lockCutoffTime: { $gt: now },
+    ...(automaticDispatch ? {
+      status: { $in: ['forming', 'locked', 'assigned', 'accepted', 'in_progress'] },
+      acceptingVisits: { $ne: false }, specificService,
+    } : { status: 'forming', lockCutoffTime: { $gt: now } }),
     centroidLocation: {
       $geoWithin: {
         $centerSphere: [location.coordinates, radiusInRadians],
@@ -175,19 +174,6 @@ export async function findCompatiblePools({
       continue;
     }
 
-    const count = activeMembers.length + 1;
-    const serviceMinutes = category.estimatedDurationMins || 30;
-    const minRequiredMs = (pool.automaticDispatch ? count * serviceMinutes + (count - 1) * 10 : serviceMinutes) * 60000;
-    const earliestShift = +pool.aggregateTimeWindow.start + minRequiredMs - +timeWindow.end;
-    const latestShift = +pool.aggregateTimeWindow.end - minRequiredMs - +timeWindow.start;
-    const shift = allowShift ? Math.max(earliestShift, Math.min(0, latestShift)) : 0;
-    const offeredWindow = { start: new Date(+timeWindow.start + shift), end: new Date(+timeWindow.end + shift) };
-    if (allowShift && (!shift || Math.abs(shift) > 2 * 3600000 || offeredWindow.start <= now)) continue;
-    const intersection = computeIntervalIntersection(pool.aggregateTimeWindow, offeredWindow);
-    if (!intersection) continue;
-    const overlapDurationMs = +intersection.end - +intersection.start;
-    if (overlapDurationMs < minRequiredMs) continue;
-
     // 3. Pairwise clique proximity: booking must be within radius of every existing member
     let allMembersWithinRadius = true;
     for (const member of activeMembers) {
@@ -203,6 +189,19 @@ export async function findCompatiblePools({
 
     // 4. Distance to current pool centroid
     const distToCentroid = haversineDistanceKm(location, pool.centroidLocation);
+
+    if (automaticDispatch) {
+      const plan = await planVisitInsertion(pool, { category, session, allowShift,
+        extra: { _id: bookingId, location, timeWindow } });
+      if (plan) compatiblePools.push({ pool, plan, distanceKm: distToCentroid, offeredWindow: plan.offeredWindow,
+        newIntersection: plan.offeredWindow, activeMembersCount: activeMembers.length });
+      continue;
+    }
+    const offeredWindow = timeWindow;
+    const intersection = computeIntervalIntersection(pool.aggregateTimeWindow, timeWindow);
+    if (!intersection) continue;
+    const overlapDurationMs = +intersection.end - +intersection.start;
+    if (overlapDurationMs < (category.estimatedDurationMins || 30) * 60000) continue;
 
     // 5. Compute deterministic score
     const score = calculateMatchingScore({
@@ -226,6 +225,9 @@ export async function findCompatiblePools({
 
   // Deterministic sorting: highest score first; break ties by earliest createdAt
   compatiblePools.sort((a, b) => {
+    if (automaticDispatch) return b.activeMembersCount - a.activeMembersCount ||
+      Math.abs(a.plan.shift) - Math.abs(b.plan.shift) || a.plan.extraTravel - b.plan.extraTravel ||
+      +a.pool.createdAt - +b.pool.createdAt;
     if (b.score !== a.score) return b.score - a.score;
     return new Date(a.pool.createdAt).getTime() - new Date(b.pool.createdAt).getTime();
   });
@@ -310,7 +312,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
 
   // Search for candidate pools
   const candidates = booking.poolScope && !targetPoolId ? [] : await findCompatiblePools({
-    serviceCategoryId: booking.serviceCategoryId,
+    serviceCategoryId: booking.serviceCategoryId, bookingId: booking._id,
     location: booking.location,
     customerId: booking.customerId,
     automaticDispatch: booking.automaticDispatch, specificService: booking.specificService, buildingKey: booking.buildingKey, targetPoolId,
@@ -319,6 +321,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
   });
 
   let joinedPool = null;
+  let visitPlan;
 
   // Try joining compatible candidates in deterministic order
   for (const candidate of candidates) {
@@ -328,8 +331,8 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     const updatedPool = await ServicePool.findOneAndUpdate(
       {
         _id: candidate.pool._id,
-        status: 'forming',
-        lockCutoffTime: { $gt: new Date() },
+        ...(booking.automaticDispatch ? { status: candidate.pool.status, acceptingVisits: { $ne: false } } :
+          { status: 'forming', lockCutoffTime: { $gt: new Date() } }),
         $expr: {
           $lt: [
             {
@@ -362,6 +365,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     );
 
     if (updatedPool) {
+      visitPlan = candidate.plan;
       joinedPool = updatedPool;
       break;
     }
@@ -379,16 +383,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
       _id: { $in: activeBookingIds },
     }).session(session);
 
-    let aggregateStart = new Date(0);
-    let aggregateEnd = new Date(8640000000000000);
-
-    for (const b of activeBookings) {
-      const bStart = new Date(b.timeWindow.start).getTime();
-      const bEnd = new Date(b.timeWindow.end).getTime();
-      if (bStart > aggregateStart.getTime()) aggregateStart = new Date(bStart);
-      if (bEnd < aggregateEnd.getTime()) aggregateEnd = new Date(bEnd);
-    }
-
+    const { start: aggregateStart, end: aggregateEnd } = memberWindow(activeBookings, joinedPool.automaticDispatch);
     const lockCutoffMs = (category.poolLockCutoffMins || 60) * 60 * 1000;
     const newLockCutoff = effectiveCutoff(joinedPool, aggregateStart, lockCutoffMs);
 
@@ -408,7 +403,21 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     joinedPool.pricing = newPricing;
 
     // Auto-lock if pool reached maximum capacity
-    if (activeMembers.length >= joinedPool.maxCapacity) {
+    if (booking.automaticDispatch) {
+      joinedPool.acceptingVisits = activeMembers.length < joinedPool.maxCapacity;
+      if (joinedPool.assignedTechnicianId) {
+        await TechnicianProfile.updateOne({ userId: joinedPool.assignedTechnicianId }, { $inc: { version: 1 } }, { session });
+        booking.technicianId = joinedPool.assignedTechnicianId;
+        booking.assignedAt = new Date();
+        booking.status = joinedPool.status === 'assigned' ? 'assigned' : 'accepted';
+        if (booking.status === 'accepted') booking.acceptedAt = new Date();
+        await Notification.create([{ userId: booking.customerId, role: 'customer', type: 'booking',
+          relatedEntityId: booking._id, title: 'Technician Assigned', message: 'Your technician and visit time are available in your booking.' },
+          { userId: booking.technicianId, role: 'technician', type: 'dispatch', relatedEntityId: joinedPool._id,
+            title: 'Visit added', message: 'Your stop list has been updated.' }], { session, ordered: true });
+      } else booking.status = 'confirmed';
+      await applyVisitSchedule(joinedPool, visitPlan, session);
+    } else if (activeMembers.length >= joinedPool.maxCapacity) {
       joinedPool.status = 'locked';
     }
 
@@ -439,13 +448,14 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
     // Update current booking reference and price
     booking.poolId = joinedPool._id;
     booking.estimatedPrice = shiftedFare(newPricing, booking.acceptedShift?.bonusPercentage).payable;
+    if (booking.automaticDispatch) booking.confirmedMaxFare = booking.estimatedPrice;
     await booking.save({ session });
 
     if (injectFailureAt === 'after_booking_update') {
       throw new Error('Simulated failure after_booking_update');
     }
 
-    if (joinedPool.status === 'locked') {
+    if (!booking.automaticDispatch && joinedPool.status === 'locked') {
       joinedPool = await settleClosingLimits(joinedPool, session);
       const current = await Booking.findById(booking._id).session(session);
       if (current.status === 'cancelled') return { booking: current, pool: null, mode: 'cancelled' };
@@ -506,6 +516,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
         serviceCategoryId: category._id,
         zoneId: booking.zoneId || null,
         status: 'forming',
+        ...(booking.automaticDispatch && { acceptingVisits: true }),
         automaticDispatch: booking.automaticDispatch, specificService: booking.specificService, poolScope: booking.poolScope, buildingKey: booking.buildingKey,
         maxCapacity: poolScopes[booking.poolScope]?.capacity || category.maxPoolSize || 4,
         poolRadiusKm: poolScopes[booking.poolScope]?.radiusKm || POOL_RADIUS_KM,
@@ -557,6 +568,10 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
   // Link booking to new pool
   booking.poolId = newPool._id;
   booking.estimatedPrice = initialPricing.finalPricePerMember;
+  if (booking.automaticDispatch) {
+    booking.status = 'confirmed';
+    booking.confirmedMaxFare = booking.estimatedPrice;
+  }
   await booking.save({ session });
 
   if (injectFailureAt === 'after_booking_update') {
@@ -600,7 +615,7 @@ async function matchInSession(bookingId, session, { targetPoolId, injectFailureA
  * Removes a booking from its pool (e.g. upon cancellation or address modification).
  * Handles recalculation of centroid, aggregate time window, cutoff, and pricing.
  */
-export async function removeBookingFromPool(bookingId, session = null, settling = false) {
+export async function removeBookingFromPool(bookingId, session = null, settling = false, retainHistory = false) {
   if (!session) return runBookingTransaction(tx => removeBookingFromPool(bookingId, tx));
   const booking = await Booking.findById(bookingId).session(session);
   if (!booking || !booking.poolId) {
@@ -631,6 +646,14 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
 
   const remainingActiveMembers = pool.members.filter((m) => m.status === 'active');
 
+  if (pool.automaticDispatch) {
+    pool.acceptingVisits = !['completed', 'cancelled'].includes(pool.status) && remainingActiveMembers.length > 0 && remainingActiveMembers.length < pool.maxCapacity;
+    pool.routeOrder = pool.routeOrder.filter(s => String(s.bookingId) !== String(bookingId));
+    pool.sharedGeometry = undefined;
+    if (pool.assignedTechnicianId) {
+      await TechnicianProfile.updateOne({ userId: pool.assignedTechnicianId }, { $inc: { version: 1 } }, { session });
+    }
+  }
   if (remainingActiveMembers.length === 0) {
     // Pool is now empty: mark cancelled
     pool.status = 'cancelled';
@@ -653,16 +676,14 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
       _id: { $in: remainingBookingIds },
     }).session(session);
 
-    let aggregateStart = new Date(0);
-    let aggregateEnd = new Date(8640000000000000);
-
-    for (const b of remainingBookings) {
-      const bStart = new Date(b.timeWindow.start).getTime();
-      const bEnd = new Date(b.timeWindow.end).getTime();
-      if (bStart > aggregateStart.getTime()) aggregateStart = new Date(bStart);
-      if (bEnd < aggregateEnd.getTime()) aggregateEnd = new Date(bEnd);
+    if (pool.automaticDispatch && remainingBookings.every(b => b.status === 'completed') && pool.status !== 'completed') {
+      pool.status = 'completed';
+      pool.completedAt = new Date();
+      pool.acceptingVisits = false;
+      await TechnicianProfile.updateOne({ userId: pool.assignedTechnicianId }, { $inc: { jobsCompleted: 1 } }, { session });
     }
 
+    const { start: aggregateStart, end: aggregateEnd } = memberWindow(remainingBookings, pool.automaticDispatch);
     const lockCutoffMs = ((category?.poolLockCutoffMins) || 60) * 60 * 1000;
     pool.aggregateTimeWindow = { start: aggregateStart, end: aggregateEnd };
     pool.lockCutoffTime = effectiveCutoff(pool, aggregateStart, lockCutoffMs);
@@ -672,11 +693,16 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
       basePrice,
       memberCount: remainingActiveMembers.length,
     });
+    if (pool.automaticDispatch && pool.routeOrder.length) {
+      const plan = await planVisitSchedule(pool, { category, session });
+      // A provider outage must not erase previously verified ETAs.
+      await applyVisitSchedule(pool, plan || { origin: pool.routeOrigin, departure: pool.routeDeparture, routeOrder: pool.routeOrder }, session);
+    }
     await priceMembers(remainingBookings, newPricing, session);
     pool.pricing = newPricing;
 
     // If pool was locked due to capacity and dropped below maxCapacity, reopen if before cutoff
-    if (pool.status === 'locked' && remainingActiveMembers.length < pool.maxCapacity && pool.lockCutoffTime > new Date()) {
+    if (!pool.automaticDispatch && pool.status === 'locked' && remainingActiveMembers.length < pool.maxCapacity && pool.lockCutoffTime > new Date()) {
       pool.status = 'forming';
     }
 
@@ -685,39 +711,51 @@ export async function removeBookingFromPool(bookingId, session = null, settling 
 
   }
 
-  booking.poolId = null;
-  await booking.save({ session });
+  if (!retainHistory) {
+    booking.poolId = null;
+    if (booking.automaticDispatch) booking.technicianId = null;
+    await booking.save({ session });
+  }
 
-  if (!settling && pool.status === 'locked') return settleClosingLimits(pool, session);
+  if (pool.automaticDispatch && pool.assignedTechnicianId) {
+    await recalculateTechnicianAvailability(pool.assignedTechnicianId, { session });
+  }
+  if (!pool.automaticDispatch && !settling && pool.status === 'locked') return settleClosingLimits(pool, session);
   return pool;
 }
 
+function memberWindow(bookings, automatic) {
+  const starts = bookings.map(b => +b.timeWindow.start);
+  const ends = bookings.map(b => +b.timeWindow.end);
+  return { start: new Date(automatic ? Math.min(...starts) : Math.max(...starts)),
+    end: new Date(automatic ? Math.max(...ends) : Math.min(...ends)) };
+}
+
 async function priceMembers(bookings, pricing, session) {
+  const notifications = [];
   const updates = bookings.map(booking => {
     const bonus = booking.acceptedShift?.bonusPercentage;
     const { payable, creditPaise } = shiftedFare(pricing, bonus);
-    pricing.poolTotalPaise -= creditPaise;
+    const maximum = booking.confirmedMaxFare ?? booking.estimatedPrice;
+    const price = booking.automaticDispatch ? Math.min(payable, maximum) : payable;
+    const fare = booking.status === 'completed' ? booking.estimatedPrice : price;
+    if (booking.automaticDispatch && booking.poolId && fare < booking.estimatedPrice) {
+      notifications.push({ userId: booking.customerId, role: 'customer', type: 'booking', relatedEntityId: booking._id,
+        title: 'Visit fare reduced', message: `Your visit now costs ₹${fare}.` });
+    }
+    pricing.poolTotalPaise -= pricing.finalPricePaise - Math.round(fare * 100);
     return { updateOne: { filter: { _id: booking._id }, update: { $set: {
-      estimatedPrice: payable, ...(bonus && { 'acceptedShift.creditPaise': creditPaise }),
+      estimatedPrice: fare, ...(booking.automaticDispatch && booking.poolId && { confirmedMaxFare: maximum }), ...(bonus && booking.status !== 'completed' && { 'acceptedShift.creditPaise': creditPaise }),
     } } } };
   });
   pricing.poolTotal = pricing.poolTotalPaise / 100;
   await Booking.bulkWrite(updates, { session });
+  if (notifications.length) await Notification.insertMany(notifications, { session, ordered: true });
 }
 
 // Removing one member can raise the price for the remaining members. Recheck until stable.
 export async function settleClosingLimits(pool, session) {
-  while (pool.status !== 'cancelled') {
-    const overLimit = await Booking.findOne({ poolId: pool._id, status: { $in: ['pending', 'confirmed'] },
-      closingPriceLimit: { $type: 'number' }, $expr: { $gt: ['$estimatedPrice', '$closingPriceLimit'] } }).session(session);
-    if (!overLimit) break;
-    pool = await removeBookingFromPool(overLimit._id, session, true);
-    await Booking.updateOne({ _id: overLimit._id }, { $set: { status: 'cancelled', cancelledAt: new Date() } }, { session });
-    await Notification.create([{ userId: overLimit.customerId, role: 'customer', type: 'booking',
-      relatedEntityId: overLimit._id, title: 'Cancelled at your price limit',
-      message: `The closing price exceeded your ₹${overLimit.closingPriceLimit} limit. Your visit was cancelled.`,
-    }], { session });
-  }
+  pool = await enforceClosingPriceLimits(pool, session);
   if (pool.status !== 'cancelled' && pool.status !== 'locked') {
     pool.status = 'locked';
     await pool.save({ session });
@@ -728,6 +766,21 @@ export async function settleClosingLimits(pool, session) {
       { $set: { status: 'confirmed' } },
       { session }
     );
+  }
+  return pool;
+}
+
+export async function enforceClosingPriceLimits(pool, session) {
+  while (pool.status !== 'cancelled') {
+    const overLimit = await Booking.findOne({ poolId: pool._id, status: { $in: ['pending', 'confirmed'] },
+      closingPriceLimit: { $type: 'number' }, $expr: { $gt: ['$estimatedPrice', '$closingPriceLimit'] } }).session(session);
+    if (!overLimit) break;
+    pool = await removeBookingFromPool(overLimit._id, session, true);
+    await Booking.updateOne({ _id: overLimit._id }, { $set: { status: 'cancelled', cancelledAt: new Date() } }, { session });
+    await Notification.create([{ userId: overLimit.customerId, role: 'customer', type: 'booking',
+      relatedEntityId: overLimit._id, title: 'Cancelled at your price limit',
+      message: `The closing price exceeded your ₹${overLimit.closingPriceLimit} limit. Your visit was cancelled.`,
+    }], { session });
   }
   return pool;
 }

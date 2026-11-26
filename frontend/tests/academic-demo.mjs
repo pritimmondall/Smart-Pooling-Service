@@ -150,13 +150,13 @@ test('three customers see a private visit sequence, follow the technician throug
     await page.waitForSelector('option[value="' + value + '"]');
     await page.select('form select', value);
     await page.$$eval('input[type=datetime-local]', (inputs, start) => {
-      for (const [i, value] of [start, start + 120 * 60000].entries()) {
+      for (const [i, value] of [start, start + 15 * 60000].entries()) {
         const date = new Date(value);
         const local = new Date(+date - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inputs[i], local);
         inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
       }
-    }, +monday + (index === 2 ? 120 * 60000 : 0));
+    }, +monday + (index === 1 ? 20 * 60000 : 0));
     await click(page, 'Check visit price');
     if (index === 2) {
       await page.waitForSelector('input[name=shift]');
@@ -212,7 +212,7 @@ test('three customers see a private visit sequence, follow the technician throug
   }
   assert.equal(byVisit.size, 3);
   for (let stop = 0; stop < 3; stop++) {
-    for (const [label, action] of [['Mark Arrived', 'arrive'], ['Start Service', 'start'], ['Complete Service', 'complete']]) {
+    for (const [label, action] of [['On the way', 'status'], ['Mark Arrived', 'arrive'], ['Start Service', 'start'], ['Complete Service', 'complete']]) {
       const [response] = await Promise.all([
         tech.waitForResponse(res => res.url().includes('/stops/') && res.url().endsWith('/' + action)),
         click(tech, label),

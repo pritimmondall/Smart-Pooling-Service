@@ -65,19 +65,23 @@ test('ten customer visits across five technician specialties', async t => {
   t.diagnostic('Service day ' + day.toISOString().slice(0, 10) + ' (IST)');
   const visits = [];
   for (const [category, lng, start, end, shift] of [
-    [0, 88.3608, 10, 13], [0, 88.3595, 10, 13], [0, 88.3601, 13, 16, true],
+    [0, 88.3608, 10, 10.5], [0, 88.3595, 10.6, 11.5], [0, 88.3601, 10, 10.5, true],
     [3, 88.3608, 10, 13], [3, 88.3602, 10.5, 13],
-    [0, 88.3904, 10, 13], [0, 88.3608, 16, 18],
+    [0, 88.3904, 10, 13], [0, 88.367, 16, 18],
     [2, 88.3608, 13, 15], [1, 88.3904, 14, 16], [4, 88.38, 10, 13],
   ]) {
     const name = 'C' + (visits.length + 1);
     const account = await register(name, 'customer');
     const location = point(lng);
-    const input = { automaticDispatch: true, serviceCategoryId: categories[category].id, specificService: service[category],
+    const input = { serviceCategoryId: categories[category].id, specificService: service[category],
       location, addressText: name + ' test home', timeWindow: { start: at(start), end: at(end) } };
-    const quote = await api('/bookings/quote', 'POST', account.token, input);
+    if (!visits.length) {
+      await assert.rejects(api('/visits', 'POST', account.token, { ...input, bookingMode: 'individual' }), /INVALID_VISIT_FIELD/);
+    }
+    const quote = await api('/visits/quote', 'POST', account.token, input);
+    assert.equal(quote.nearbyPools, undefined);
     if (shift) assert.ok(quote.shiftOffer);
-    const booking = await api('/bookings', 'POST', account.token, { ...input,
+    const booking = await api('/visits', 'POST', account.token, { ...input, quoteToken: quote.quoteToken,
       quotedPrice: shift ? quote.shiftOffer.price : quote.finalPricePerMember, ...(shift && { acceptShift: quote.shiftOffer }) });
     if (shift) assert.equal(booking.timeWindow.start, quote.shiftOffer.timeWindow.start);
     else assert.equal(booking.timeWindow.start, at(start).toISOString());
@@ -89,14 +93,11 @@ test('ten customer visits across five technician specialties', async t => {
   assert.equal(await ServicePool.countDocuments(), 7);
   assert.equal(await Booking.countDocuments({ technicianId: { $ne: null } }), 0);
   const forming = await ServicePool.find().sort({ createdAt: 1 });
-  for (const pool of forming) {
-    assert.ok(+pool.lockCutoffTime <= +pool.createdAt + 4 * 60000);
-  }
-  // Simulate one pool persisted with the old cutoff near its scheduled visit.
+  // Legacy cutoffs do not postpone dispatch or close automatic admission.
   await ServicePool.updateOne({ _id: forming[0]._id }, { lockCutoffTime: day });
-  const nextSweep = new Date(+forming.at(-1).createdAt + 4.5 * 60000);
+  const nextSweep = new Date(+forming.at(-1).createdAt + 30000);
   const sweep = await runPoolLockSweep({ now: nextSweep, dispatch: true });
-  assert.equal(sweep.lockedCount, 7);
+  assert.equal(sweep.lockedCount, 0);
 
   for (const [members, technician] of [[[1,2,3], 1], [[4,5], 4], [[6], 2], [[7], 1], [[8], 3], [[9], 2], [[10], 5]]) {
     const group = members.map(n => visits[n - 1]);
@@ -116,11 +117,22 @@ test('ten customer visits across five technician specialties', async t => {
       assert.ok(Date.parse(stop.estimatedServiceStart) >= Date.parse(order[i].window.start));
       assert.ok(Date.parse(stop.estimatedServiceEnd) <= Date.parse(order[i].window.end));
     }
-    // Every permutation fits these shared windows. Independently compare travel seconds.
+    // Independently compare travel for feasible permutations, including every service duration.
     const matrix = await new MockRoadRoutingProvider().getDistanceMatrix([tech.base, ...group.map(v => v.location)]);
-    const times = permutations(group.map((_, i) => i + 1)).map(path =>
-      path.reduce((sum, stop, i) => sum + matrix.durations[i ? path[i - 1] : 0][stop], 0));
-    assert.equal(route.totalTravelTime.seconds, Math.min(...times));
+    const times = permutations(group.map((_, i) => i + 1)).flatMap(path => {
+      let cursor = +at(9);
+      let travel = 0;
+      for (const [i, stop] of path.entries()) {
+        const leg = matrix.durations[i ? path[i - 1] : 0][stop];
+        const window = group[stop - 1].window;
+        travel += leg;
+        cursor = Math.max(cursor + leg * 1000, Date.parse(window.start)) + 30 * 60000;
+        if (cursor > Date.parse(window.end)) return [];
+      }
+      return [travel];
+    });
+    // Later jobs can depart from the preceding appointment.
+    if (group.length > 1) assert.equal(route.totalTravelTime.seconds, Math.min(...times));
     await api(path + '/accept', 'POST', tech.token, {});
     const accepted = await ServicePool.findById(id);
     assert.deepEqual(accepted.routeOrder.map(stop => String(stop.bookingId)), order.map(v => v.id));

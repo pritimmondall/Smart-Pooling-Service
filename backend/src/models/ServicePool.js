@@ -12,10 +12,10 @@ export const POOL_STATUSES = [
 ];
 
 const VALID_STATUS_TRANSITIONS = {
-  forming: ['locked', 'cancelled'],
+  forming: ['locked', 'assigned', 'cancelled'], // automatic home visits dispatch directly
   locked: ['assigned', 'cancelled', 'forming'], // 'forming' allowed if cancellation drops pool back before lock cutoff
-  assigned: ['accepted', 'locked', 'cancelled'], // 'locked' if technician declines/rejects
-  accepted: ['in_progress', 'cancelled'],
+  assigned: ['accepted', 'locked', 'forming', 'cancelled'], // 'locked' if technician declines/rejects
+  accepted: ['in_progress', 'forming', 'cancelled'],
   in_progress: ['completed', 'cancelled'],
   completed: [],
   cancelled: [],
@@ -59,6 +59,9 @@ const servicePoolSchema = new mongoose.Schema(
   {
     specificService: { type: String, maxlength: 100 },
     automaticDispatch: { type: Boolean, default: false },
+    acceptingVisits: Boolean,
+    routeDeparture: Date,
+    routeOrigin: { type: createGeoPointSchema(false), default: undefined },
     poolScope: { type: String, enum: ['building', '200m', '500m', '1km'] },
     buildingKey: { type: String, maxlength: 160 },
     serviceCategoryId: {

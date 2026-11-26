@@ -264,3 +264,21 @@ export function shiftedFare(pricing, bonusPercentage = 0) {
   const payablePaise = pricing.basePricePaise - Math.floor(pricing.basePricePaise * totalPercent / 100);
   return { payable: toRupees(payablePaise), creditPaise: pricing.finalPricePaise - payablePaise };
 }
+
+// Allocate whole paise deterministically, including any remainder.
+function portion(total, count, index) {
+  return Math.floor(total / count) + (index < total % count ? 1 : 0);
+}
+
+export function allocateSavings(savedMeters, costPerKm, stops) {
+  const total = Math.round(Math.max(0, savedMeters) * costPerKm / 10);
+  const customer = Math.floor(total / 2);
+  const technician = Math.floor(total / 4);
+  const platform = total - customer - technician;
+  return stops.map((stop, i) => ({
+    bookingId: stop.bookingId, sequenceIndex: stop.sequenceIndex,
+    customerPaise: portion(customer, stops.length, i),
+    technicianPaise: portion(technician, stops.length, i),
+    platformPaise: portion(platform, stops.length, i),
+  }));
+}

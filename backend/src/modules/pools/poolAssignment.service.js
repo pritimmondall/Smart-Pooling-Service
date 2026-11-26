@@ -1,5 +1,7 @@
+import { planVisitSchedule, applyVisitSchedule } from '../routing/visitSchedule.service.js';
 import mongoose from 'mongoose';
 import {
+  ServiceCategory,
   ServicePool,
   Booking,
   TechnicianProfile,
@@ -54,7 +56,7 @@ export function withinServiceHours(window, hours) {
  * @param {mongoose.ClientSession} [options.session]
  * @returns {Promise<{ isEligible: boolean, reasons: string[], distanceKm: number, currentWorkload: number }>}
  */
-export async function evaluateTechnicianEligibility(profile, pool, { session = null } = {}) {
+export async function evaluateTechnicianEligibility(profile, pool, { session = null, now = new Date() } = {}) {
   const reasons = [];
   let user = profile.userId || {};
 
@@ -128,10 +130,7 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
 
   // 7. Scheduling conflicts check
   const targetWindow = pool.aggregateTimeWindow;
-  if (targetWindow?.start && targetWindow?.end) {
-    if (pool.automaticDispatch && !withinServiceHours(targetWindow, profile.workingHours)) {
-      reasons.push('The visit window falls outside your scheduled working hours.');
-    }
+  if (!pool.automaticDispatch && targetWindow?.start && targetWindow?.end) {
     // Check assigned pools
     const activeAssignedPools = await ServicePool.find(
       {
@@ -182,8 +181,15 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
     reasons.push('Technician previously rejected this service pool.');
   }
 
+  let plan;
+  if (pool.automaticDispatch && !reasons.length) {
+    const category = await ServiceCategory.findById(poolCatId).session(session);
+    plan = category && await planVisitSchedule(pool, { profile, category, session, now });
+    if (!plan) reasons.push('No verified route fits the service windows and existing appointments.');
+  }
+
   return {
-    isEligible: reasons.length === 0,
+    plan, isEligible: reasons.length === 0,
     reasons,
     distanceKm: Number.isFinite(distanceKm) ? (pool.automaticDispatch ? distanceKm : Number(distanceKm.toFixed(2))) : 0,
     currentWorkload,
@@ -196,7 +202,7 @@ export async function evaluateTechnicianEligibility(profile, pool, { session = n
  * @param {string|mongoose.Types.ObjectId} poolId
  * @returns {Promise<Array<Object>>}
  */
-export async function findEligibleTechniciansForPool(poolId) {
+export async function findEligibleTechniciansForPool(poolId, { now = new Date() } = {}) {
   const pool = await ServicePool.findById(poolId)
     .populate('serviceCategoryId', 'name slug baseIndividualPrice')
     .populate('zoneId', 'name code city');
@@ -224,12 +230,13 @@ export async function findEligibleTechniciansForPool(poolId) {
   const candidates = [];
 
   for (const profile of profiles) {
-    const evaluation = await evaluateTechnicianEligibility(profile, pool);
+    const evaluation = await evaluateTechnicianEligibility(profile, pool, { now });
     candidates.push({
       technicianId: profile.userId?._id,
       name: profile.userId?.name,
       email: profile.userId?.email,
       phone: profile.userId?.phone,
+      extraTravelMs: evaluation.plan?.extraTravel,
       profileId: profile._id,
       ratingAvg: profile.ratingAvg,
       jobsCompleted: profile.jobsCompleted,
@@ -246,6 +253,7 @@ export async function findEligibleTechniciansForPool(poolId) {
     if (a.isEligible !== b.isEligible) {
       return a.isEligible ? -1 : 1;
     }
+    if (pool.automaticDispatch && a.isEligible && a.extraTravelMs !== b.extraTravelMs) return a.extraTravelMs - b.extraTravelMs;
     if (a.distanceKm !== b.distanceKm) {
       return a.distanceKm - b.distanceKm;
     }
@@ -517,7 +525,7 @@ export async function reserveFormingPoolForTechnician(poolId, technicianUserId) 
  * @param {string|mongoose.Types.ObjectId} technicianUserId
  * @returns {Promise<Object>}
  */
-export async function assignPoolToTechnician(poolId, technicianUserId, { requireOpen = false } = {}) {
+export async function assignPoolToTechnician(poolId, technicianUserId, { requireOpen = false, now = new Date() } = {}) {
   if (!mongoose.isValidObjectId(poolId)) {
     throw new AppError(400, 'Invalid pool ID format.', 'INVALID_ID');
   }
@@ -533,10 +541,10 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
         throw new AppError(404, 'Service pool not found.', 'POOL_NOT_FOUND');
       }
 
-      if (requireOpen && pool.aggregateTimeWindow.end <= new Date()) {
+      if (requireOpen && pool.aggregateTimeWindow.end <= now) {
         throw new AppError(409, 'This service window has ended.', 'JOB_EXPIRED');
       }
-      if (pool.status !== 'locked') {
+      if (pool.status !== 'locked' && !(pool.automaticDispatch && pool.status === 'forming')) {
         throw new AppError(
           409,
           `Pool cannot be assigned: status is "${pool.status}" (must be "locked").`,
@@ -564,7 +572,7 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
       }
 
       // 3. Re-evaluate eligibility, availability, workload, and scheduling conflicts under technician write lock
-      const evaluation = await evaluateTechnicianEligibility(lockedProfile, pool, { session });
+      const evaluation = await evaluateTechnicianEligibility(lockedProfile, pool, { session, now });
       if (!evaluation.isEligible) {
         throw new AppError(
           409,
@@ -579,7 +587,7 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
       const assignedPool = await ServicePool.findOneAndUpdate(
         {
           _id: pool._id,
-          status: 'locked',
+          status: pool.status,
           assignedTechnicianId: null,
           reservedTechnicianId: { $in: [null, technicianUserId] },
         },
@@ -587,7 +595,7 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
           $set: {
             status: 'assigned',
             assignedTechnicianId: lockedProfile.userId._id,
-            assignedAt: new Date(),
+            assignedAt: now,
             reservedTechnicianId: null,
             reservedAt: null,
           },
@@ -615,12 +623,17 @@ export async function assignPoolToTechnician(poolId, technicianUserId, { require
           $set: {
             status: 'assigned',
             technicianId: lockedProfile.userId._id,
-            assignedAt: new Date(),
+            assignedAt: now,
           },
         },
         { session, ordered: true }
       );
 
+      if (evaluation.plan) {
+        await applyVisitSchedule(assignedPool, evaluation.plan, session);
+        assignedPool.acceptingVisits = activeMemberBookingIds.length < assignedPool.maxCapacity;
+        await assignedPool.save({ session });
+      }
       // 6. Recalculate technician availability and active workload
       await recalculateTechnicianAvailability(lockedProfile.userId._id, { session });
 

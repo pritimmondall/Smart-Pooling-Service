@@ -54,9 +54,9 @@ export default function BookingDetailPage() {
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
-  const fetchBooking = useCallback(async () => {
+  const fetchBooking = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setError(null);
       const res = await bookingsApi.getById(id);
       const data = res?.data;
@@ -93,6 +93,12 @@ export default function BookingDetailPage() {
   useEffect(() => {
     fetchBooking();
   }, [fetchBooking]);
+
+  useEffect(() => {
+    if (!booking?.automaticDispatch || ['completed', 'cancelled'].includes(booking.status)) return;
+    const timer = setInterval(() => fetchBooking(true), 5000);
+    return () => clearInterval(timer);
+  }, [booking?.automaticDispatch, booking?.status, fetchBooking]);
 
   const handleSaveEdit = async (e) => {
     e.preventDefault();
@@ -170,7 +176,7 @@ export default function BookingDetailPage() {
 
   const service = booking.serviceCategoryId;
   const timelineState = getBookingTimelineState(booking.status);
-  const isPending = booking.status === 'pending';
+  const isPending = booking.status === 'pending' || (booking.automaticDispatch && !booking.departedAt && ['confirmed','assigned','accepted'].includes(booking.status));
   const isCancelled = timelineState.isCancelled;
   const currentStepIndex = timelineState.currentStepIndex;
   const lat = booking.location?.coordinates?.[1] ?? 22.5015;
@@ -191,7 +197,7 @@ export default function BookingDetailPage() {
       })
     : '';
   const endTime = booking.timeWindow?.end
-    ? new Date(booking.timeWindow.end).toLocaleTimeString(undefined, {
+    ? new Date(booking.timeWindow.end).toLocaleString(undefined, { month: 'short', day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
       })
@@ -280,15 +286,25 @@ export default function BookingDetailPage() {
               ₹{booking.estimatedPrice}
             </span>
             <span className="text-[10px] text-slate-400 uppercase font-semibold">
-              Estimated Rate
+              {booking.status === 'completed' ? 'Final fare' : booking.automaticDispatch ? 'Current fare' : 'Estimated rate'}
             </span>
           </div>
         </div>
 
+        {booking.automaticDispatch && <div className="space-y-2 text-sm" aria-live="polite">
+          <p>Confirmed maximum ₹{booking.confirmedMaxFare ?? booking.estimatedPrice} · Savings ₹{((pool?.pricing?.individualBasePrice ?? service?.baseIndividualPrice ?? booking.estimatedPrice) - booking.estimatedPrice).toFixed(2)}</p>
+          {booking.technicianName && <p>Technician · {booking.technicianName}{booking.departedAt && booking.status === 'accepted' && ' · On the way'}</p>}
+          {booking.estimatedStart && <p>Estimated visit · {new Date(booking.estimatedStart).toLocaleString()}</p>}
+          {booking.waiting && <div><p>No technician is available yet. We’re continuing to check your window.</p>
+            <button className="underline mr-4" onClick={() => setActionSuccess('We’ll keep looking for a technician for this window.')}>Keep waiting</button>
+            <button className="underline" onClick={() => navigate('/create-booking?' + new URLSearchParams({
+              replace: booking._id, serviceId: service._id, service: booking.specificService,
+            }), { state: { pin: { lat, lng }, address: booking.addressText } })}>Select another window</button></div>}
+        </div>}
         {booking.acceptedShift?.acceptedAt && <p className="text-sm">Time change accepted · ₹{(booking.acceptedShift.creditPaise / 100).toFixed(2)} flexibility discount included.</p>}
         {booking.closingPriceLimit != null && <p className="text-sm">Your closing price limit · ₹{booking.closingPriceLimit}</p>}
 
-        {!booking.poolScope && booking.routeSavings?.provider && (
+        {!booking.poolScope && booking.status !== 'completed' && booking.routeSavings?.provider && (
           <p className="text-sm text-emerald-800">
             Estimated travel credit ₹{Math.min(booking.estimatedPrice, booking.routeSavings.customerPaise / 100).toFixed(2)} · Estimated total after credit ₹{Math.max(0, booking.estimatedPrice - booking.routeSavings.customerPaise / 100).toFixed(2)}
             {booking.routeSavings.provider === 'mock' && ' (simulated route)'}. This estimate is separate from the pooled booking discount.
@@ -368,6 +384,8 @@ export default function BookingDetailPage() {
           <div className="flex justify-between"><dt>Service rate</dt><dd>₹{pool.pricing.individualBasePrice}</dd></div>
           <div className="flex justify-between"><dt>Shared visit discount ({pool.pricing.discountPercentage}%)</dt><dd>−₹{pool.pricing.totalSavingsPerMember}</dd></div>
           {booking.acceptedShift?.acceptedAt && <div className="flex justify-between"><dt>Time change discount</dt><dd>−₹{(booking.acceptedShift.creditPaise / 100).toFixed(2)}</dd></div>}
+          {booking.automaticDispatch && pool.pricing.finalPricePerMember - (booking.acceptedShift?.creditPaise || 0) / 100 > booking.estimatedPrice &&
+            <div className="flex justify-between"><dt>Confirmed fare protection</dt><dd>−₹{(pool.pricing.finalPricePerMember - (booking.acceptedShift?.creditPaise || 0) / 100 - booking.estimatedPrice).toFixed(2)}</dd></div>}
           <div className="flex justify-between border-t pt-2 font-semibold"><dt>{pool.status === 'forming' ? 'Estimated fare' : 'Visit fare'}</dt><dd>₹{booking.estimatedPrice}</dd></div>
         </dl>
       </section>}

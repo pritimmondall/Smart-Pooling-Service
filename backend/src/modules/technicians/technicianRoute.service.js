@@ -1,3 +1,4 @@
+import { applyVisitSchedule, planVisitSchedule } from '../routing/visitSchedule.service.js';
 import { executionMembers } from './executionMembers.js';
 import { planSharedGeometry } from '../routing/customerRoute.service.js';
 import { runInTransaction } from '../../config/db.js';
@@ -79,7 +80,7 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name phone')
-    .populate('members.bookingId', 'addressText location timeWindow status poolId stopSequence')
+    .populate('members.bookingId', 'addressText location timeWindow status poolId departedAt stopSequence')
     .sort({ 'aggregateTimeWindow.start': 1 })
     .lean();
 
@@ -128,7 +129,7 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
           addressText: b.addressText || m.addressText,
           location: b.location || m.location,
           timeWindow: b.timeWindow || pool.aggregateTimeWindow,
-          status: b.status || m.status,
+          status: b.status || m.status, departedAt: b.departedAt,
           estimatedArrival: savedOrder?.estimatedArrival || null,
           estimatedServiceStart: savedOrder?.estimatedServiceStart || null,
           estimatedServiceEnd: savedOrder?.estimatedServiceEnd || null,
@@ -137,16 +138,16 @@ export async function getTechnicianActiveRoutes(technicianUserId) {
       .sort((a, b) => a.sequenceIndex - b.sequenceIndex);
 
     return {
-      jobId: pool._id,
+      automaticDispatch: pool.automaticDispatch, jobId: pool._id,
       jobType: 'pool',
       status: pool.status,
       serviceCategory: pool.serviceCategoryId,
       zone: pool.zoneId,
       timeWindow: pool.aggregateTimeWindow,
-      origin: originLocation,
-      originSource,
-      isOriginStale,
-      originLastUpdatedAt,
+      origin: pool.routeOrigin || originLocation,
+      originSource: pool.routeOrigin ? 'scheduled' : originSource,
+      isOriginStale: pool.routeOrigin ? false : isOriginStale,
+      originLastUpdatedAt: pool.routeOrigin ? null : originLastUpdatedAt,
       totalStops: stops.length,
       stops,
       routeOrderPersisted: (pool.routeOrder || []).length > 0,
@@ -232,7 +233,7 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name phone')
-    .populate('members.bookingId', 'addressText location timeWindow notes status poolId stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason');
+    .populate('members.bookingId', 'addressText location timeWindow notes status poolId departedAt stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason');
 
   if (pool) {
     // Partition members: only active members with unfinished bookings are eligible for new route optimization
@@ -254,6 +255,20 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
       .filter((ro) => !unfinishedBookingIdSet.has(String(ro.bookingId)))
       .map((ro) => (ro.toObject ? ro.toObject() : { ...ro }));
 
+    if (replan && pool.automaticDispatch) {
+      await runInTransaction(async session => {
+        const current = await ServicePool.findOne({ _id: jobId, assignedTechnicianId: technicianUserId,
+          status: { $in: ['accepted', 'in_progress'] } }).session(session);
+        if (!current) throw new AppError(409, 'Refresh this job before replanning.', 'STALE_ROUTE');
+        const locked = await TechnicianProfile.findOneAndUpdate({ userId: technicianUserId }, { $inc: { version: 1 } },
+          { session, new: true }).populate('userId', 'isActive');
+        const plan = await planVisitSchedule(current, { profile: locked, category: pool.serviceCategoryId, session });
+        if (!plan) throw new AppError(409, 'The remaining route could not be verified.', 'REPLAN_UNAVAILABLE');
+        await applyVisitSchedule(current, plan, session);
+        await current.save({ session });
+      }, { requireTransaction: true });
+      return getTechnicianJobRoute(technicianUserId, jobId);
+    }
     if (replan && (pool.poolScope || !['accepted', 'in_progress'].includes(pool.status))) {
       throw new AppError(409, 'Only accepted automatic pools can be replanned.', 'REPLAN_UNAVAILABLE');
     }
@@ -295,7 +310,7 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
       });
 
       const current = unfinishedMembers.findIndex(m => ['arrived', 'in_progress'].includes(m.bookingId?.status));
-      const departure = replan ? new Date(Math.max(Date.now(), pool.aggregateTimeWindow.start.getTime())) : pool.aggregateTimeWindow.start;
+      const departure = replan ? new Date(Math.max(Date.now(), pool.aggregateTimeWindow.start.getTime())) : (pool.routeDeparture || pool.aggregateTimeWindow.start);
       if (replan && current >= 0 && current + 1 < unfinishedStops.length) {
         const suffix = unfinishedStops.slice(current + 1);
         const planned = await optimizePoolRoute({
@@ -307,8 +322,8 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
         unfinishedStops.splice(current + 1, suffix.length, ...planned.stops.map(stop => byId.get(String(stop.bookingId))));
       }
       optimized = await optimizePoolRoute({
-        technicianStartLocation: startLocation,
-        preserveOrder: Boolean(pool.poolScope) || current >= 0 || (!replan && pool.status !== 'assigned'),
+        technicianStartLocation: pool.routeOrigin || startLocation,
+        preserveOrder: Boolean(pool.automaticDispatch || pool.poolScope) || current >= 0 || (!replan && pool.status !== 'assigned'),
         stops: unfinishedStops,
         departureTime: departure,
       });
@@ -320,6 +335,16 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
         sequenceIndex: slots[idx],
       }));
 
+      if (pool.automaticDispatch && pool.routeOrder.length) {
+        optimized.stops = optimized.stops.map(stop => {
+          const saved = existingRouteMap.get(String(stop.bookingId));
+          if (!saved?.estimatedServiceEnd) return stop;
+          return { ...stop, estimatedArrival: saved.estimatedArrival, estimatedServiceStart: saved.estimatedServiceStart,
+            estimatedServiceEnd: saved.estimatedServiceEnd, isTimeWindowFeasible: +saved.estimatedServiceEnd <= Date.parse(stop.timeWindow.end) };
+        });
+        optimized.schedulingConflicts = optimized.schedulingConflicts.filter(conflict =>
+          !optimized.stops.find(s => String(s.bookingId) === String(conflict.bookingId))?.isTimeWindowFeasible);
+      }
       // If road network calculation succeeded, merge newly calculated route estimates with existing persisted execution state
       if (replan && !optimized.roadDistanceCalculated) throw new AppError(503, 'Routing provider unavailable.', 'REPLAN_UNAVAILABLE');
       if (replan && optimized.stops.length > 0) {
@@ -360,16 +385,16 @@ export async function getTechnicianJobRoute(technicianUserId, jobId, { overrideL
     }
 
     return {
-      jobId: pool._id,
+      automaticDispatch: pool.automaticDispatch, jobId: pool._id,
       jobType: 'pool',
       status: pool.status,
       serviceCategory: pool.serviceCategoryId,
       zone: pool.zoneId,
       timeWindow: pool.aggregateTimeWindow,
-      origin: startLocation,
-      originSource,
-      isOriginStale,
-      originLastUpdatedAt,
+      origin: pool.routeOrigin || startLocation,
+      originSource: pool.routeOrigin ? 'scheduled' : originSource,
+      isOriginStale: pool.routeOrigin ? false : isOriginStale,
+      originLastUpdatedAt: pool.routeOrigin ? null : originLastUpdatedAt,
       ...optimized,
     };
   }

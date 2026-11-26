@@ -12,17 +12,19 @@ export default function TechnicianDay({ routes, processing, onArrive, onStart, o
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
+  const scheduledStart = route => new Date(route.stops[0]?.estimatedServiceStart || route.timeWindow.start);
+  const scheduledEnd = route => new Date(route.stops.at(-1)?.estimatedServiceEnd || route.timeWindow.end);
   const ordered = routes.filter(route => route.stops.length).slice()
-    .sort((a, b) => new Date(a.timeWindow.start) - new Date(b.timeWindow.start));
+    .sort((a, b) => scheduledStart(a) - scheduledStart(b));
   const candidates = ordered.filter(route => route.status !== 'assigned');
-  const next = candidates.find(route => onSite(route.stops[0].status)) || candidates[0];
+  const next = candidates.find(route => onSite(route.stops[0].status) || route.stops[0].departedAt) || candidates[0];
   const stop = next?.stops[0];
   const points = next?.stops.filter(s => s.location?.coordinates).map(s => ({
     point: s.location.coordinates, number: s.sequenceIndex, status: s.status,
   })) || [];
   const schedule = ordered.filter(route => new Date(route.timeWindow.start) < tomorrow && new Date(route.timeWindow.end) >= today);
   const action = stop?.status === 'in_progress' ? [onComplete, 'Complete Service'] :
-    stop?.status === 'arrived' ? [onStart, 'Start Service'] : [onArrive, 'Mark Arrived'];
+    stop?.status === 'arrived' ? [onStart, 'Start Service'] : next?.automaticDispatch && !stop?.departedAt ? [onArrive, 'On the way', true] : [onArrive, 'Mark Arrived'];
   return <div className="desk-day">
     <section className="desk-visit">
       <div className="desk-visit-info">
@@ -33,7 +35,7 @@ export default function TechnicianDay({ routes, processing, onArrive, onStart, o
           <p className="desk-address"><MapPin size={16}/>{stop.addressText}</p>
           <p className="desk-address"><Clock size={16}/>{new Date(stop.timeWindow.start).toLocaleDateString()} · {time(stop.timeWindow.start)} – {time(stop.timeWindow.end)}</p>
           <div className="desk-visit-actions">
-            <button className="desk-primary" disabled={processing[stop.bookingId]} onClick={() => action[0](next.jobId, stop.bookingId)}>{action[1]}<ArrowUpRight size={16}/></button>
+            <button className="desk-primary" disabled={processing[stop.bookingId]} onClick={() => action[0](next.jobId, stop.bookingId, action[2])}>{action[1]}<ArrowUpRight size={16}/></button>
             {stop.location?.coordinates && <a target="_blank" rel="noreferrer" href={'https://www.google.com/maps/dir/?api=1&destination=' + stop.location.coordinates.slice().reverse().join(',')}><Navigation size={15}/>Directions</a>}
             {stop.customer.phone && stop.customer.phone !== 'N/A' && <a href={'tel:' + stop.customer.phone} aria-label={'Call ' + stop.customer.name + ' at ' + stop.customer.phone}><Phone size={15}/>Call</a>}
           </div>
@@ -57,12 +59,13 @@ export default function TechnicianDay({ routes, processing, onArrive, onStart, o
       {!schedule.length && <div className="desk-schedule-empty"><Clock size={24}/><p>No remaining visits today.</p></div>}
       {schedule.map(route => {
         const conflict = schedule.some(other => other.jobId !== route.jobId &&
-          new Date(other.timeWindow.start) < new Date(route.timeWindow.end) && new Date(route.timeWindow.start) < new Date(other.timeWindow.end));
+          scheduledStart(other) < scheduledEnd(route) && scheduledStart(route) < scheduledEnd(other));
         return <div key={route.jobId} className="rounded-xl bg-slate-50 p-3 text-sm">
           <strong>{time(route.timeWindow.start)} – {time(route.timeWindow.end)} · {route.serviceCategory?.name}</strong>
           <span> · {route.status.replace('_',' ')}</span>{conflict && <strong className="text-amber-700"> · Overlapping job windows</strong>}
           {route.stops.map(visit => <div key={visit.bookingId} className="flex justify-between gap-3 mt-1">
             <span>{visit.sequenceIndex}. {visit.customer.name} · {visit.addressText}
+              {visit.estimatedServiceStart && <span> · ETA {time(visit.estimatedServiceStart)}</span>}
               {Date.now() > Date.parse(visit.timeWindow.end) && <strong className="text-rose-700"> · Window elapsed</strong>}
               {visit.estimatedArrival && Date.parse(visit.estimatedArrival) > Date.parse(visit.timeWindow.end) && <span> · Estimated late arrival</span>}</span>
             {route.status !== 'assigned' && <button className="text-rose-700 shrink-0" onClick={() => openIncident(route, visit)}>Report issue</button>}

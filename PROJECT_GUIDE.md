@@ -63,11 +63,9 @@ A **booking** belongs to one customer and can exist independently. A **pool** co
 
 ### A. Which customers can share a pool?
 
-1. Find forming pools with the requested category, a future lock cutoff and a nearby centroid. Automatic matching uses 200 m.
-2. Check specific service, capacity, active membership and scope. A same-building pool also requires a matching normalized building name.
-3. Use Haversine distance with Earth radius 6,371 km. The new pin must be within the allowed radius of **every active member**. If A is close to B and B is close to C, A and C may still be too far apart.
-4. Intersect the incoming window with the pool's shared window. Take the later start and earlier end. The overlap must be positive and at least one service duration. Routing assesses the actual sequence later.
-5. Rank eligible automatic pools by the score below. The highest score wins. Scores are rounded to four decimal places and ties use earliest creation. On joining, update membership, centroid, common window and price.
+Automatic home visits use the same specific service, the category capacity and a maximum pairwise distance of 200 m. The scheduler checks each insertion against individual finish deadlines, road travel, technician shifts and adjacent commitments. A technician's assigned or accepted group can admit later customers. The customer compares the requested window with at most one cheaper shift. [Visit scheduler](backend/src/modules/routing/visitSchedule.service.js) · [Home visit workflow](README.md#home-visit-api-and-rollout)
+
+Manual pool matching still checks a future cutoff and a common window. It scores eligible candidates using the existing weights.
 
 ```text
 proximity = 1 − distance to centroid / radius
@@ -97,11 +95,11 @@ memberFare    = basePricePaise − discountPaise
 poolFare      = memberFare × activeMemberCount
 ```
 
-One ₹600 AC booking starts at ₹600. When a second compatible customer joins, the discount becomes ₹60 per person, the stored estimate becomes ₹540 each and the total estimated service fare is ₹1,080. A third member moves the fare to ₹510 each. If that member leaves while the pool can still reprice, the two-member rate returns. This is the clearest demonstration of a group decision changing an individual's bill. [Pricing engine](backend/src/modules/pools/pricing.service.js) · [Stored-price workflow test](backend/tests/customer-technician-workflow.test.js)
+One ₹600 AC booking starts at ₹600. When a second compatible customer joins, the discount becomes ₹60 per person, the stored estimate becomes ₹540 each and the total estimated service fare is ₹1,080. A third member moves the fare to ₹510 each. If that member leaves, the two-member tier applies again, subject to each automatic customer's confirmed ceiling. This is the clearest demonstration of a group decision changing an individual's bill. [Pricing engine](backend/src/modules/pools/pricing.service.js) · [Stored-price workflow test](backend/tests/customer-technician-workflow.test.js)
 
 ### C. How are the visits and travel savings calculated?
 
-SmartPool builds a matrix from the technician's origin and the member stops. For a reorderable route of up to eight stops it uses exact branch-and-bound. For larger reorderable routes it uses nearest-neighbour followed by 2-opt improvements. Each candidate order accumulates travel, waiting, service time and late arrivals. A service can finish beyond the window end even when arrival was on time. Customer-created scoped pools preserve booking order. [Route solver](backend/src/modules/routing/routeOptimization.service.js) · [Order policy at acceptance](backend/src/modules/pools/routeSavings.service.js)
+Automatic home visits use a road-time matrix to find a feasible initial route, then evaluate insertions into that route. Each service must finish inside its confirmed window. The general route preview builds a matrix from the technician's origin and the member stops. For a reorderable preview of up to eight stops it uses exact branch-and-bound. For larger reorderable routes it uses nearest-neighbour followed by 2-opt improvements. Each candidate order accumulates travel, waiting, service time and late arrivals. Customer-created scoped pools preserve booking order. [Route solver](backend/src/modules/routing/routeOptimization.service.js) · [Order policy at acceptance](backend/src/modules/pools/routeSavings.service.js)
 
 ```text
 route score = 1,000,000 × late arrivals + travel seconds + 0.5 × wait seconds
@@ -113,7 +111,7 @@ The default rate is ₹10/km. A 1 km saving gives ₹10 total. The customers col
 
 ## 6. Lifecycle, visibility and reliability
 
-The usual pool sequence is **forming → locked → assigned → accepted → in progress → completed**. Cancellation and limited reopening have separate rules. Forming permits eligible joins. A full pool can lock immediately. The server also starts a worker at startup and schedules sweeps every 30 seconds for cutoffs, dispatch and price watches. A forming-pool reservation records technician interest before final assignment. Eligibility checks include account activity, approval, availability, service skills, coverage, capacity and scheduling conflicts. [State transitions](backend/src/models/ServicePool.js) · [Worker](backend/src/modules/pools/poolWorker.js) · [Eligibility](backend/src/modules/pools/poolAssignment.service.js)
+Automatic home visits move from forming directly to assigned and accepted. Admission remains open while capacity and route feasibility allow it. Manual pools follow **forming → locked → assigned → accepted → in progress → completed**. Cancellation and limited reopening have separate rules. Forming permits eligible joins. A full pool can lock immediately. The server also starts a worker at startup and schedules sweeps every 30 seconds for cutoffs, dispatch and price watches. A forming-pool reservation records technician interest before final assignment. Eligibility checks include account activity, approval, availability, service skills, coverage, capacity and scheduling conflicts. [State transitions](backend/src/models/ServicePool.js) · [Worker](backend/src/modules/pools/poolWorker.js) · [Eligibility](backend/src/modules/pools/poolAssignment.service.js)
 
 **What each customer sees.** Personal history is scoped to the signed-in customer. A neighbour can discover an open pool and join with their own booking. After technician acceptance, a pool member can see the visit sequence, their own precise pin and approximate areas for other homes. Shared geometry uses area-centre coordinates and omits the technician's origin. If road geometry is unavailable, the ordered stops remain useful. [Shared route construction](backend/src/modules/routing/customerRoute.service.js) · [Geometry tests](backend/tests/customer-route-geometry.test.js)
 

@@ -238,11 +238,11 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
       estimatedDurationMins: 30, maxPoolSize: 2 });
     const start = new Date(Date.now() + 7 * 86400000);
     start.setUTCHours(5, 0, 0, 0); // 10:30 in the service area
-    const window = minutes => ({ start: new Date(+start + minutes * 60000), end: new Date(+start + (minutes + 120) * 60000) });
+    const window = minutes => ({ start: new Date(+start + minutes * 60000), end: new Date(+start + (minutes + 30) * 60000) });
     const input = { ...payload, specificService: service.name, serviceCategoryId: service.id, automaticDispatch: true, timeWindow: window(0) };
     const first = (await request(owner, '/bookings', 'POST', input, 201)).data;
     const id = first.poolId._id;
-    const later = { ...input, timeWindow: window(120) };
+    const later = { ...input, timeWindow: window(0) };
     const { shiftOffer, finalPricePerMember } = (await request(neighbor, '/bookings/quote', 'POST', later)).data;
     assert.equal(finalPricePerMember, 600);
     assert.equal(shiftOffer.price, 510);
@@ -277,6 +277,7 @@ test('customers quote and join privately, dispatch completes the pool, earnings 
     const accepted = await ServicePool.findById(id);
     assert.deepEqual(new Set(accepted.routeOrder.map(stop => String(stop.bookingId))), new Set([first._id, second._id]));
     const missed = (await request(distant, '/bookings', 'POST', input, 201)).data;
+    await Booking.updateOne({ _id: missed._id }, { timeWindow: { start: new Date(1000), end: new Date(2000) } });
     await ServicePool.updateOne({ _id: missed.poolId._id }, { $set: { lockCutoffTime: new Date(0),
       aggregateTimeWindow: { start: new Date(1000), end: new Date(2000) } } });
     await runPoolLockSweep({ dispatch: true });

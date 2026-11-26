@@ -1,3 +1,4 @@
+import { removeBookingFromPool } from '../pools/matching.service.js';
 import { executionMembers } from './executionMembers.js';
 import mongoose from 'mongoose';
 import {
@@ -13,7 +14,7 @@ import { parseGeoInput } from '../../utils/geo.js';
 import { recalculateTechnicianAvailability } from './technicianAvailability.service.js';
 import { getTechnicianJobRoute } from './technicianRoute.service.js';
 
-export const VALID_STOP_TARGET_STATUSES = ['arrived', 'in_progress', 'completed', 'cancelled'];
+export const VALID_STOP_TARGET_STATUSES = ['on_the_way', 'arrived', 'in_progress', 'completed', 'cancelled'];
 
 /**
  * Calculates stop progression metrics for a pooled or individual job.
@@ -77,7 +78,7 @@ export async function getJobStops(technicianUserId, jobId) {
     .populate('serviceCategoryId', 'name slug estimatedDurationMins')
     .populate('zoneId', 'name code city')
     .populate('members.customerId', 'name email phone')
-    .populate('members.bookingId', 'addressText location timeWindow status poolId stopSequence arrivedAt startedAt completedAt cancelledAt rejectionReason')
+    .populate('members.bookingId', 'addressText location timeWindow status poolId stopSequence departedAt arrivedAt startedAt completedAt cancelledAt rejectionReason')
     .lean();
 
   if (pool) {
@@ -113,6 +114,7 @@ export async function getJobStops(technicianUserId, jobId) {
             phone: c.phone || 'N/A',
             email: c.email || 'N/A',
           },
+          departedAt: b.departedAt,
           arrivedAt: b.arrivedAt || null,
           startedAt: b.startedAt || null,
           completedAt: b.completedAt || null,
@@ -357,7 +359,7 @@ export async function transitionStopStatus(
         // --- ENFORCE SEQUENTIAL PROGRESSION ---
         // For transitions that activate or begin a stop ('arrived', 'in_progress'),
         // all earlier stops in the sequence MUST be in a terminal state ('completed' or 'cancelled')
-        if (['arrived', 'in_progress'].includes(targetStatus)) {
+        if (['on_the_way', 'arrived', 'in_progress'].includes(targetStatus)) {
           const earlierIncomplete = sortedStops
             .slice(0, targetStopIndex)
             .find((s) => !['completed', 'cancelled'].includes(s.status));
@@ -376,7 +378,17 @@ export async function transitionStopStatus(
         let updateSet = null;
         let notificationPayload = null;
 
-        if (targetStatus === 'arrived') {
+        if (targetStatus === 'on_the_way') {
+          if (!pool.automaticDispatch || currentStatus !== 'accepted') {
+            throw new AppError(409, 'Only an accepted home visit can be marked on the way.', 'INVALID_STATUS_TRANSITION');
+          }
+          if (targetBooking.departedAt) return { jobId, stop: targetBooking };
+          conditionalFilter = { _id: stopObjectId, status: 'accepted', departedAt: null };
+          updateSet = { departedAt: now };
+          pool.version += 1;
+          notificationPayload = { userId: targetBooking.customerId, role: 'customer', type: 'execution',
+            relatedEntityId: targetBooking._id, title: 'Technician on the way', message: technicianName + ' is on the way to your home.' };
+        } else if (targetStatus === 'arrived') {
           if (currentStatus === 'arrived') {
             throw new AppError(409, 'Stop is already marked as arrived.', 'INVALID_STATUS_TRANSITION');
           }
@@ -537,6 +549,10 @@ export async function transitionStopStatus(
           );
         }
 
+        // Serialize changes to the technician's departure and finish times with dispatch
+        // and route insertion for their other jobs.
+        await TechnicianProfile.updateOne({ userId: userObjectId }, { $inc: { version: 1 } }, { session });
+
         // Synchronize pool member status if cancelled
         if (targetStatus === 'cancelled') {
           const poolMember = members.find((m) => String(m.bookingId) === String(stopObjectId));
@@ -594,7 +610,9 @@ export async function transitionStopStatus(
           }
         }
 
+        if (pool.automaticDispatch && isParentPoolFinished) pool.acceptingVisits = false;
         await pool.save({ session });
+        if (pool.automaticDispatch && targetStatus === 'cancelled') await removeBookingFromPool(stopObjectId, session, false, true);
         if (startingPool || isParentPoolFinished) await recalculateTechnicianAvailability(userObjectId, { session });
 
         // Atomic notification insertion
@@ -640,6 +658,8 @@ export async function transitionStopStatus(
           isParentJobFinished: isParentPoolFinished,
         };
       }
+
+      if (targetStatus === 'on_the_way') throw new AppError(409, 'This action requires a home visit.', 'INVALID_STATUS_TRANSITION');
 
       // --- INDIVIDUAL BOOKING PROGRESSION ---
       const booking = await Booking.findById(jobObjectId).session(session);

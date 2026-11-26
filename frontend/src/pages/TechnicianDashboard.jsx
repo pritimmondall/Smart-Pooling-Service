@@ -219,13 +219,14 @@ export default function TechnicianDashboard() {
   };
 
   // Handle arrive at stop
-  const handleArriveStop = async (jobId, stopId) => {
+  const handleArriveStop = async (jobId, stopId, depart = false) => {
     if (processingStops[stopId]) return;
     try {
       setProcessingStops((prev) => ({ ...prev, [stopId]: true }));
       setError(null);
-      await techniciansApi.arriveJobStop(jobId, stopId);
-      showFeedback('Arrival recorded at stop. You can now begin service work.');
+      if (depart) await techniciansApi.departJobStop(jobId, stopId);
+      else await techniciansApi.arriveJobStop(jobId, stopId);
+      showFeedback(depart ? 'Customer notified that you are on the way.' : 'Arrival recorded at stop. You can now begin service work.');
       await Promise.all([fetchStops(jobId, true), fetchData(true)]);
     } catch (err) {
       setError(err.message || 'Failed to record arrival at stop.');
@@ -787,10 +788,10 @@ export default function TechnicianDashboard() {
                           <button
                             type="button"
                             disabled={isProcessing}
-                            onClick={() => promptCancelJob(job)}
+                            onClick={() => job.automaticDispatch ? promptRejectJob(job) : promptCancelJob(job)}
                             className="px-3 py-2 rounded-xl text-xs font-medium text-slate-600 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-50"
                           >
-                            Cancel
+                            {job.automaticDispatch ? 'Decline' : 'Cancel'}
                           </button>
                         </div>
                       )}
@@ -1057,11 +1058,11 @@ export default function TechnicianDashboard() {
                                               <button
                                                 type="button"
                                                 disabled={isStopProcessing}
-                                                onClick={() => handleArriveStop(job._id, stop.bookingId)}
+                                                onClick={() => handleArriveStop(job._id, stop.bookingId, job.automaticDispatch && !stop.departedAt)}
                                                 className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-xs disabled:opacity-50 transition-colors"
                                               >
                                                 <MapPin className="w-3.5 h-3.5" />
-                                                {isStopProcessing ? 'Recording Arrival...' : 'Mark Arrived'}
+                                                {isStopProcessing ? 'Updating…' : job.automaticDispatch && !stop.departedAt ? 'On the way' : 'Mark Arrived'}
                                               </button>
                                             )}
                                             {isArrived && (
@@ -1159,7 +1160,7 @@ export default function TechnicianDashboard() {
               <div className="flex items-center gap-2 text-slate-500 text-[11px]">
                 {routeData.originSource && (
                   <span className="px-2 py-0.5 rounded-md bg-slate-200/70 text-slate-700 font-medium">
-                    Origin: {routeData.originSource === 'live_gps' ? 'Live GPS' : routeData.originSource === 'override' ? 'Selected location' : 'Base Location'}
+                    Origin: {routeData.originSource === 'scheduled' ? 'Scheduled departure location' : routeData.originSource === 'live_gps' ? 'Live GPS' : routeData.originSource === 'override' ? 'Selected location' : 'Base Location'}
                     {routeData.isOriginStale ? ' (Stale)' : ''}
                   </span>
                 )}

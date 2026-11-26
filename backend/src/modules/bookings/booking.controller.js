@@ -1,3 +1,5 @@
+import { wakeVisitDispatch } from '../pools/poolWorker.js';
+import { visitQuote, readVisitQuote, sameOffer } from './visitQuote.service.js';
 import { canEditPoolCutoff } from '../pools/poolOwnership.js';
 import { customerVisitRoute } from '../routing/customerRoute.service.js';
 import { PoolWatch } from '../../models/PoolWatch.js';
@@ -33,7 +35,7 @@ import {
 /**
  * Parses and validates booking preferred time window boundaries.
  */
-function parseTimeWindow(timeWindow) {
+function parseTimeWindow(timeWindow, allowPast = false) {
   if (!timeWindow || !timeWindow.start || !timeWindow.end) {
     throw new AppError(400, 'timeWindow.start and timeWindow.end are required.', 'VALIDATION_ERROR');
   }
@@ -47,7 +49,7 @@ function parseTimeWindow(timeWindow) {
   if (end <= start) {
     throw new AppError(400, 'timeWindow.end must be strictly after timeWindow.start.', 'VALIDATION_ERROR');
   }
-  if (start <= new Date()) {
+  if (!allowPast && start <= new Date()) {
     throw new AppError(400, 'Booking time window start must be in the future.', 'VALIDATION_ERROR');
   }
 
@@ -69,8 +71,9 @@ export const quoteBooking = asyncHandler(async (req, res) => {
   };
   if (criteria.automaticDispatch) validateVisit(category, criteria);
   const candidates = await findCompatiblePools(criteria);
-  const shiftOffer = criteria.automaticDispatch && !candidates.length
-    ? await findShiftOffer(criteria, category) : null;
+  const automaticQuote = criteria.automaticDispatch && await visitQuote({ ...criteria,
+    replaceBookingId: req.body.replaceBookingId }, category, candidates);
+  if (res.locals.homeVisit) return sendSuccess(res, { data: automaticQuote });
   const [candidate] = candidates;
   const pricing = calculatePoolPricing({
     basePrice: category.baseIndividualPrice, memberCount: (candidate?.activeMembersCount || 0) + 1,
@@ -85,7 +88,7 @@ export const quoteBooking = asyncHandler(async (req, res) => {
     distanceMeters: Math.round(candidate.distanceKm * 1000),
     overlapMinutes: Math.floor((candidate.newIntersection.end - candidate.newIntersection.start) / 60000),
   } : null;
-  return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch, shiftOffer } });
+  return sendSuccess(res, { data: { ...pricing, nearbyPools, recommendedMatch, shiftOffer: null, ...automaticQuote } });
 });
 
 function validateVisit(category, { specificService, timeWindow }) {
@@ -95,16 +98,6 @@ function validateVisit(category, { specificService, timeWindow }) {
   if (+timeWindow.end - +timeWindow.start < category.estimatedDurationMins * 60000) {
     throw new AppError(400, `Allow at least ${category.estimatedDurationMins} minutes for this service.`, 'SHORT_WINDOW');
   }
-}
-
-async function findShiftOffer(criteria, category) {
-  const candidates = await findCompatiblePools({ ...criteria, allowShift: true });
-  const [best] = candidates;
-  if (!best) return null;
-  const pricing = calculatePoolPricing({ basePrice: category.baseIndividualPrice, memberCount: best.activeMembersCount + 1 });
-  const { payable, creditPaise } = shiftedFare(pricing, SHIFT_BONUS_PERCENTAGE);
-  if (!creditPaise) return null;
-  return { poolId: best.pool._id, timeWindow: best.offeredWindow, price: payable, creditPaise };
 }
 
 function validatePriceLimit(value) {
@@ -199,7 +192,7 @@ export const createBooking = asyncHandler(async (req, res) => {
     throw new AppError(400, 'Select a service and enter the building name for an apartment-area pool.', 'VALIDATION_ERROR');
   }
   const parsedWindow = target && req.body.watchWindow ? parseTimeWindow(req.body.watchWindow) : target ? target.aggregateTimeWindow : scope
-    ? scheduledWindow(category, scope.capacity) : parseTimeWindow(timeWindow);
+    ? scheduledWindow(category, scope.capacity) : parseTimeWindow(timeWindow, Boolean(res.locals.homeVisit));
 
   const automaticDispatch = req.body.automaticDispatch === true;
   if (automaticDispatch) {
@@ -211,20 +204,46 @@ export const createBooking = asyncHandler(async (req, res) => {
     throw new AppError(400, 'Invalid time shift offer.', 'INVALID_SHIFT');
   }
 
+  const criteria = { customerId: req.user._id, serviceCategoryId, specificService, location: geoLocation,
+    timeWindow: parsedWindow, automaticDispatch, replaceBookingId: req.body.replaceBookingId };
+  const claims = (res.locals.homeVisit || (automaticDispatch && req.body.quoteToken)) && readVisitQuote(req.body.quoteToken, criteria);
+  const selection = consent ? 'shift' : 'original';
+  const confirmedTarget = consent ? claims?.shiftOffer?.poolId : claims?.originalPool;
   const { booking, pool: assignedPool } = await runBookingTransaction(async session => {
+    let previous;
     let offer = null;
-    if (consent) {
+    if (claims) {
+      const existing = await Booking.findOne({ _id: claims.bookingId, customerId: req.user._id }).session(session);
+      if (existing) {
+        if (existing.confirmationSelection !== selection) throw new AppError(409, 'This quote has already been confirmed.', 'ALREADY_CONFIRMED');
+        return { booking: existing, pool: existing.poolId };
+      }
+      if (parsedWindow.start <= new Date()) throw new AppError(409, 'Choose a future visit window.', 'WINDOW_ELAPSED');
+      if (claims.exp * 1000 <= Date.now() || claims.duration !== category.estimatedDurationMins ||
+          (consent && (!sameOffer(claims.shiftOffer, consent) || Date.parse(consent.timeWindow.start) <= Date.now()))) {
+        throw new AppError(409, 'Review the updated visit quote.', 'QUOTE_CHANGED');
+      }
+      if (req.body.replaceBookingId) {
+        previous = await Booking.findOne({ _id: req.body.replaceBookingId, customerId: req.user._id,
+          automaticDispatch: true, technicianId: null,
+          status: { $in: ['confirmed', 'pending'] } }).session(session);
+        if (!previous || !waitingForTechnician(previous)) throw new AppError(409, 'The original booking changed. Check its status before rebooking.', 'BOOKING_CHANGED');
+      }
+      if (consent) {
+        offer = { ...claims.shiftOffer, timeWindow: { start: new Date(consent.timeWindow.start), end: new Date(consent.timeWindow.end) } };
+      }
+    } else if (consent) {
       const criteria = { customerId: req.user._id, serviceCategoryId, specificService,
         automaticDispatch, timeWindow: parsedWindow, location: geoLocation, session };
-      if (!(await findCompatiblePools(criteria)).length) offer = await findShiftOffer(criteria, category);
-      if (!offer || String(offer.poolId) !== consent.poolId || offer.price !== consent.price ||
-          +offer.timeWindow.start !== Date.parse(consent.timeWindow?.start) ||
-          +offer.timeWindow.end !== Date.parse(consent.timeWindow?.end)) {
+      offer = (await visitQuote(criteria, category)).shiftOffer;
+      if (!sameOffer(offer, consent)) {
         throw new AppError(409, 'This time shift offer changed. Check your options again.', 'OFFER_CHANGED');
       }
     }
     await User.updateOne({ _id: req.user._id, poolAlertLocation: null }, { poolAlertLocation: geoLocation }, { session });
     const [booking] = await Booking.create([{
+      ...(claims && { _id: claims.bookingId, confirmationSelection: selection }),
+      ...(automaticDispatch && { dispatchDueAt: new Date(Date.now() + 5 * 60000) }),
       customerId: req.user._id,
       specificService, poolScope: scopeKey, buildingKey: building,
       serviceCategoryId: category._id,
@@ -241,9 +260,17 @@ export const createBooking = asyncHandler(async (req, res) => {
       notes,
     }], { session });
     if (bookingMode === 'pool') {
-      const matched = await matchAndAssignBooking(booking._id, { session, targetPoolId: offer?.poolId || targetPoolId });
+      const matched = await matchAndAssignBooking(booking._id, { session, targetPoolId: confirmedTarget || offer?.poolId || targetPoolId });
+      if (claims && (matched.booking.estimatedPrice !== (offer?.price ?? claims.price) ||
+          (!confirmedTarget && matched.mode !== 'created'))) {
+        throw new AppError(409, 'Review the updated visit quote.', 'QUOTE_CHANGED');
+      }
       if (req.body.quotedPrice !== undefined && matched.booking.estimatedPrice > req.body.quotedPrice) {
         throw new AppError(409, 'The pool price changed. Review the updated quote.', 'QUOTE_CHANGED');
+      }
+      if (previous) {
+        await removeBookingFromPool(previous._id, session);
+        await Booking.updateOne({ _id: previous._id }, { $set: { status: 'cancelled', cancelledAt: new Date() } }, { session });
       }
       return matched;
     }
@@ -253,8 +280,15 @@ export const createBooking = asyncHandler(async (req, res) => {
       type: 'booking', relatedEntityId: booking._id,
     }], { session });
     return { booking, pool: null };
+  }).catch(async err => {
+    if (claims && ['POOL_UNAVAILABLE', 'QUOTE_CHANGED'].includes(err.code)) {
+      throw new AppError(409, 'The offer changed. Review the updated quote before confirming.', 'QUOTE_CHANGED',
+        { quote: await visitQuote(criteria, category) });
+    }
+    throw err;
   });
 
+  if (booking.automaticDispatch && !booking.technicianId) wakeVisitDispatch(booking.poolId);
   const freshBooking = await Booking.findById(booking._id)
     .populate('serviceCategoryId', 'name slug baseIndividualPrice estimatedDurationMins defaultPoolRadiusKm maxPoolSize poolLockCutoffMins')
     .populate('zoneId', 'name code city')
@@ -262,16 +296,21 @@ export const createBooking = asyncHandler(async (req, res) => {
 
   return sendSuccess(res, {
     statusCode: 201,
-    message: freshBooking.status === 'cancelled' ? 'Cancelled at your closing price limit.' : assignedPool
+    message: claims ? 'Home visit confirmed.' : freshBooking.status === 'cancelled' ? 'Cancelled at your closing price limit.' : assignedPool
       ? `Booking created and matched to service pool (${assignedPool.status}).`
       : 'Individual booking created.',
     data: freshBooking,
   });
 });
 
+function waitingForTechnician(booking) {
+  return Boolean(booking.automaticDispatch && !booking.technicianId && ['pending', 'confirmed'].includes(booking.status) &&
+    (booking.waitingSince || Date.now() >= +(booking.dispatchDueAt || new Date(+booking.createdAt + 5 * 60000))));
+}
+
 export const getDashboardBooking = asyncHandler(async (req, res) => {
   const customerId = req.user._id;
-  const select = 'acceptedShift closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
+  const select = 'automaticDispatch departedAt waitingSince dispatchDueAt createdAt acceptedShift closingPriceLimit specificService serviceCategoryId poolId technicianId status estimatedPrice timeWindow';
   const next = await Booking.findOne({ customerId, $or: [
     { status: { $in: ['arrived', 'in_progress'] } },
     { status: { $in: ['pending', 'confirmed', 'assigned', 'accepted'] }, 'timeWindow.end': { $gt: new Date() } },
@@ -295,8 +334,9 @@ export const getDashboardBooking = asyncHandler(async (req, res) => {
   return sendSuccess(res, { data: {
     visitRoute, visitsAhead, closingPriceLimit: next.closingPriceLimit, serviceCategoryId: next.serviceCategoryId,
     id: next._id, service: next.specificService || service?.name, status: next.status,
-    price: next.estimatedPrice, technician: technician?.name, estimatedStart: stop?.estimatedServiceStart,
-    window: pool?.aggregateTimeWindow || next.timeWindow,
+    price: next.estimatedPrice, technician: technician?.name, estimatedStart: next.technicianId && stop?.estimatedServiceStart,
+    window: next.automaticDispatch ? next.timeWindow : pool?.aggregateTimeWindow || next.timeWindow,
+    waiting: waitingForTechnician(next), departedAt: next.departedAt,
     pool: pool && { id: pool._id, automaticDispatch: pool.automaticDispatch, canEditCutoff: canEditPoolCutoff(pool, customerId), nextPrice, status: pool.status, members: pool.pricing?.memberCount, deadline: pool.lockCutoffTime },
   } });
 });
@@ -367,6 +407,13 @@ export const getBookingById = asyncHandler(async (req, res) => {
     throw new AppError(403, 'You do not have permission to view this booking.', 'FORBIDDEN_BOOKING_ACCESS');
   }
 
+  if (booking.automaticDispatch) {
+    const pool = booking.poolId && await ServicePool.findById(booking.poolId._id, 'routeOrder').lean();
+    const stop = pool?.routeOrder.find(s => String(s.bookingId) === String(booking._id));
+    const tech = booking.technicianId && await User.findById(booking.technicianId, 'name').lean();
+    return sendSuccess(res, { data: { ...booking.toObject(), technicianName: tech?.name,
+      estimatedStart: tech && stop?.estimatedServiceStart, waiting: waitingForTechnician(booking) } });
+  }
   if (booking.poolScope && booking.poolId) {
     const pool = await ServicePool.findById(booking.poolId._id, 'members.bookingId members.status aggregateTimeWindow').lean();
     const position = pool?.members.filter(m => m.status === 'active').findIndex(m => String(m.bookingId) === String(booking._id));
@@ -474,7 +521,7 @@ export const cancelMyBooking = asyncHandler(async (req, res) => {
       throw new AppError(403, 'You can only cancel your own bookings.', 'FORBIDDEN_BOOKING_ACCESS');
     }
 
-    if (booking.status !== 'pending') {
+    if (booking.status !== 'pending' && !(booking.automaticDispatch && !booking.departedAt && ['confirmed', 'assigned', 'accepted'].includes(booking.status))) {
       throw new AppError(
         409,
         `Booking in status "${booking.status}" cannot be cancelled.`,
@@ -486,6 +533,8 @@ export const cancelMyBooking = asyncHandler(async (req, res) => {
       await removeBookingFromPool(booking._id, session);
     }
 
+    booking.cancelledAt = new Date();
+    booking.technicianId = null;
     booking.status = 'cancelled';
     booking.poolId = null;
     await booking.save({ session });

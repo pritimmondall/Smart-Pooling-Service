@@ -3,7 +3,7 @@ import { LocateFixed, MapPin } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import LocationPickerMap from '../components/common/LocationPickerMap.jsx';
 
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import DashboardPoolMatcher from '../components/common/DashboardPoolMatcher.jsx';
 
 import './CustomerDashboard.css';
@@ -14,10 +14,12 @@ export default function CreateBookingPage() {
   const { user, syncContactProfile, updateProfile } = useAuth();
   const [params] = useSearchParams();
   const saved = user?.poolAlertLocation?.coordinates;
-  const [location, setLocation] = useState(() => saved ? { lat: saved[1], lng: saved[0] } : null);
+  const previous = useLocation().state;
+  const previousPin = params.get('replace') && previous?.pin;
+  const [location, setLocation] = useState(() => previousPin || (saved ? { lat: saved[1], lng: saved[0] } : null));
   const [editingLocation, setEditingLocation] = useState(false);
-  const picked = useRef(false);
-  const [pinAddress, setPinAddress] = useState('');
+  const picked = useRef(Boolean(previousPin));
+  const [pinAddress, setPinAddress] = useState(previous?.address || '');
   const chooseLocation = point => { setPinAddress(''); picked.current = true; setLocation(point); };
   useEffect(() => {
     if (saved) {

@@ -1,3 +1,5 @@
+import { wakeVisitDispatch } from '../pools/poolWorker.js';
+import { planVisitSchedule, applyVisitSchedule } from '../routing/visitSchedule.service.js';
 import mongoose from 'mongoose';
 import {
   User,
@@ -47,7 +49,7 @@ export const getMyAssignedJobs = asyncHandler(async (req, res) => {
       _id: p._id,
       jobType: 'pool',
       status: p.status,
-      poolScope: p.poolScope,
+      automaticDispatch: p.automaticDispatch, poolScope: p.poolScope,
       specificService: p.specificService,
       serviceCategory: p.serviceCategoryId,
       zone: p.zoneId,
@@ -271,6 +273,11 @@ export const acceptAssignedJob = asyncHandler(async (req, res) => {
             } }, { session });
           }
         }
+        if (pool.automaticDispatch && !pool.routeOrder.length) {
+          await pool.populate({ path: 'serviceCategoryId', select: 'estimatedDurationMins', options: { session } });
+          const schedule = await planVisitSchedule(pool, { category: pool.serviceCategoryId, session });
+          if (schedule) await applyVisitSchedule(pool, schedule, session);
+        }
         pool.status = 'accepted';
         pool.acceptedAt = new Date();
         await pool.save({ session });
@@ -379,7 +386,7 @@ export const rejectAssignedJob = asyncHandler(async (req, res) => {
           throw new AppError(403, 'You do not have permission to modify this job.', 'FORBIDDEN_JOB_ACCESS');
         }
 
-        if (pool.status !== 'assigned') {
+        if (pool.status !== 'assigned' && !(pool.automaticDispatch && pool.status === 'accepted')) {
           throw new AppError(
             409,
             `Cannot reject job: status is "${pool.status}". Only "assigned" jobs can be rejected.`,
@@ -387,7 +394,15 @@ export const rejectAssignedJob = asyncHandler(async (req, res) => {
           );
         }
 
-        pool.status = 'locked';
+        pool.status = pool.automaticDispatch ? 'forming' : 'locked';
+        if (pool.automaticDispatch) {
+          pool.routeOrder = [];
+          pool.routeOrigin = undefined;
+          pool.routeDeparture = undefined;
+          pool.sharedGeometry = undefined;
+          pool.assignedAt = null;
+          pool.acceptedAt = null;
+        }
         pool.assignedTechnicianId = null;
         pool.rejectionReason = String(reason).trim().slice(0, 500);
 
@@ -409,7 +424,7 @@ export const rejectAssignedJob = asyncHandler(async (req, res) => {
         const activeBookingIds = pool.members.filter((m) => m.status === 'active').map((m) => m.bookingId);
         await Booking.updateMany(
           { _id: { $in: activeBookingIds } },
-          { $set: { status: 'confirmed', technicianId: null } },
+          { $set: { status: 'confirmed', technicianId: null, assignedAt: null, acceptedAt: null, waitingSince: null, departedAt: null, stopSequence: 0 } },
           { session }
         );
 
@@ -424,6 +439,12 @@ export const rejectAssignedJob = asyncHandler(async (req, res) => {
           relatedEntityId: pool._id,
         }));
 
+        if (pool.automaticDispatch) {
+          adminNotifs.push(...pool.members.filter(m => m.status === 'active').map(m => ({
+            userId: m.customerId, role: 'customer', type: 'booking', relatedEntityId: m.bookingId,
+            title: 'Finding a replacement technician', message: 'Your technician declined. Dispatch is retrying your confirmed window.',
+          })));
+        }
         if (adminNotifs.length > 0) {
           await Notification.create(adminNotifs, { session, ordered: true });
         }
@@ -472,6 +493,7 @@ export const rejectAssignedJob = asyncHandler(async (req, res) => {
     { requireTransaction: true }
   );
 
+  if (rejectedJob.data.automaticDispatch) wakeVisitDispatch(rejectedJob.data._id);
   return sendSuccess(res, rejectedJob);
 });
 
@@ -525,6 +547,9 @@ export const updateAssignedJobStatus = asyncHandler(async (req, res) => {
           );
         }
 
+        if (status === 'cancelled' && pool.automaticDispatch && currentStatus === 'accepted') {
+          throw new AppError(409, 'Decline the assignment so dispatch can find a replacement.', 'DECLINE_ASSIGNMENT');
+        }
         if (status === 'cancelled') {
           if (!['accepted', 'in_progress'].includes(currentStatus)) {
             throw new AppError(

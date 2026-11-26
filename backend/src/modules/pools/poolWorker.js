@@ -1,6 +1,7 @@
+import { removeBookingFromPool, enforceClosingPriceLimits } from './matching.service.js';
 import { runInTransaction } from '../../config/db.js';
 import { notifyTechniciansOfNewPool } from './formingPoolAlerts.service.js';
-import { Booking, ServicePool, PoolMembership, Notification } from '../../models/index.js';
+import { Booking, ServicePool, Notification } from '../../models/index.js';
 import {
   findEligibleTechniciansForPool,
   findEligibleTechniciansForBooking,
@@ -12,6 +13,7 @@ import { notifyMatchingWatches } from './watch.service.js';
 
 let workerTimer = null;
 let currentSweepPromise = null;
+const dispatches = new Map();
 
 /**
  * Executes a single sweep of expired pools with overlap protection.
@@ -27,7 +29,7 @@ export async function runPoolLockSweep(options = {}) {
         );
       }
       if (options.dispatch) {
-        await dispatchWaitingJobs();
+        await dispatchWaitingJobs(options.now);
         await notifyMatchingWatches();
       }
       return result;
@@ -87,6 +89,7 @@ export async function stopPoolWorker() {
   if (currentSweepPromise) {
     await currentSweepPromise;
   }
+  await Promise.all(dispatches.values());
   console.log('[PoolWorker] Stopped autonomous pool locking worker.');
 }
 
@@ -98,29 +101,69 @@ export function isPoolWorkerActive() {
 }
 
 
-async function closeUnassignedVisits(now) {
-  const expired = { automaticDispatch: true, status: 'locked', assignedTechnicianId: null,
-    'aggregateTimeWindow.end': { $lte: now } };
-  for await (const { _id } of ServicePool.find(expired).select('_id').lean().cursor()) {
+async function updateWaitingVisits(now) {
+  const unassigned = { automaticDispatch: true, technicianId: null, status: { $in: ['pending', 'confirmed'] } };
+  const due = Booking.find({ ...unassigned, $or: [
+    { 'timeWindow.end': { $lte: now } }, { waitingSince: null, dispatchDueAt: { $lte: now } },
+    { waitingSince: null, dispatchDueAt: null, createdAt: { $lte: new Date(+now - 5 * 60000) } },
+  ] }).select('_id').lean().cursor();
+  for await (const { _id } of due) {
     await runInTransaction(async session => {
-      const pool = await ServicePool.findOneAndUpdate({ _id, ...expired }, {
-        $set: { status: 'cancelled', 'members.$[active].status': 'cancelled' },
-      }, { session, arrayFilters: [{ 'active.status': 'active' }] });
-      if (!pool) return;
-      const members = pool.members.filter(member => member.status === 'active');
-      await Booking.updateMany({ poolId: _id, status: { $in: ['pending', 'confirmed'] } },
-        { $set: { status: 'cancelled', poolId: null, cancelledAt: now } }, { session });
-      await PoolMembership.updateMany({ poolId: _id, status: 'active' }, { status: 'cancelled' }, { session });
-      if (members.length) await Notification.insertMany(members.map(member => ({
-        userId: member.customerId, role: 'customer', relatedEntityId: member.bookingId, type: 'booking',
-        title: 'Visit window ended', message: 'No technician was available for your visit. Please choose another time to rebook.',
-      })), { session, ordered: true });
+      const booking = await Booking.findOne({ _id, ...unassigned }).session(session);
+      if (!booking) return;
+      const expired = booking.timeWindow.end <= now;
+      if (!expired && booking.waitingSince) return;
+      if (expired) {
+        await removeBookingFromPool(_id, session);
+        booking.poolId = null;
+        booking.status = 'cancelled';
+        booking.cancelledAt = now;
+      } else booking.waitingSince = now;
+      await booking.save({ session });
+      await Notification.create([{ userId: booking.customerId, role: 'customer', relatedEntityId: _id, type: 'booking',
+        title: expired ? 'Visit window ended' : 'Still looking for a technician',
+        message: expired ? 'Your service window has ended. Choose another window to rebook.' :
+          'No technician is currently available. Keep waiting or choose another window in your booking.',
+      }], { session });
     }, { requireTransaction: true });
   }
 }
 
-export async function dispatchWaitingJobs(now = new Date()) {
-  await closeUnassignedVisits(now);
+async function dispatchHomeVisits(poolId, now) {
+  const unassigned = { _id: poolId, automaticDispatch: true, assignedTechnicianId: null, status: { $in: ['forming', 'locked'] } };
+  if (!await ServicePool.exists(unassigned)) return;
+  if (await Booking.exists({ poolId, closingPriceLimit: { $type: 'number' }, status: { $in: ['pending', 'confirmed'] } })) {
+    await runInTransaction(async session => {
+      const pool = await ServicePool.findOne(unassigned).session(session);
+      if (pool) await enforceClosingPriceLimits(pool, session);
+    }, { requireTransaction: true });
+  }
+  const { eligibleTechnicians } = await findEligibleTechniciansForPool(poolId, { now });
+  for (const tech of eligibleTechnicians) {
+    try {
+      await assignPoolToTechnician(poolId, tech.technicianId, { requireOpen: true, now });
+      return;
+    } catch (error) {
+      if (error.code === 'TECHNICIAN_NOT_ELIGIBLE') continue;
+      if (error.statusCode === 409) return;
+      throw error;
+    }
+  }
+}
+
+// Wake the running worker after commit. The persisted unassigned pool is also
+// picked up by startup and periodic sweeps if the process exits before this runs.
+export function wakeVisitDispatch(poolId) {
+  if (!workerTimer || !poolId || dispatches.has(String(poolId))) return;
+  const key = String(poolId);
+  const attempt = dispatchHomeVisits(poolId)
+    .catch(error => console.warn('[Dispatch]', key, error.message))
+    .finally(() => dispatches.delete(key));
+  dispatches.set(key, attempt);
+}
+
+export async function dispatchWaitingJobs(clockOverride) {
+  const now = clockOverride || new Date();
   const forming = ServicePool.find({
     automaticDispatch: { $ne: true }, status: 'forming', formingAlertsSent: { $ne: true }, lockCutoffTime: { $gt: now },
   }).populate('serviceCategoryId', 'name').cursor();
@@ -131,7 +174,8 @@ export async function dispatchWaitingJobs(now = new Date()) {
     }
   }
   const pools = ServicePool.find({
-    status: 'locked', assignedTechnicianId: null, 'aggregateTimeWindow.end': { $gt: now },
+    $or: [{ status: 'locked' }, { status: 'forming', automaticDispatch: true }],
+    assignedTechnicianId: null, 'aggregateTimeWindow.end': { $gt: now },
   }).sort({ 'aggregateTimeWindow.start': 1 }).select('_id reservedTechnicianId automaticDispatch').lean().cursor();
   const bookings = Booking.find({
     bookingMode: 'individual', poolId: null, technicianId: null,
@@ -154,17 +198,12 @@ export async function dispatchWaitingJobs(now = new Date()) {
             { $set: { reservedTechnicianId: null, reservedAt: null } });
           }
         }
-        const { eligibleTechnicians } = await candidates(job._id);
+        if (job.automaticDispatch) {
+          await dispatchHomeVisits(job._id, clockOverride);
+          continue;
+        }
+        const { eligibleTechnicians } = await candidates(job._id, { now: clockOverride });
         for (const tech of eligibleTechnicians) {
-          if (job.automaticDispatch) {
-            try {
-              await assignPoolToTechnician(job._id, tech.technicianId, { requireOpen: true });
-              break;
-            } catch (err) {
-              if (err.code === 'TECHNICIAN_NOT_ELIGIBLE') continue;
-              throw err;
-            }
-          }
           await Notification.updateOne({ userId: tech.technicianId, relatedEntityId: job._id, type: 'opportunity' }, {
             $setOnInsert: { role: 'technician', title: 'Service available',
               message: 'A job matching your services is ready. Open available work to claim it.' },
@@ -177,4 +216,5 @@ export async function dispatchWaitingJobs(now = new Date()) {
       }
     }
   }
+  await updateWaitingVisits(clockOverride || new Date());
 }

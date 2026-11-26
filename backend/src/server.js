@@ -1,6 +1,6 @@
 import { env, validateEnv } from './config/env.js';
 import { connectDB, disconnectDB } from './config/db.js';
-import { Rating } from './models/Rating.js';
+import { Rating, PoolMembership, PoolClusterLock } from './models/index.js';
 import { startPoolWorker, stopPoolWorker } from './modules/pools/poolWorker.js';
 import app from './app.js';
 
@@ -9,7 +9,7 @@ async function startServer() {
   await connectDB();
 
   // Ensure critical database indexes exist before accepting requests
-  await Rating.createIndexes();
+  await Promise.all([Rating.createIndexes(), PoolMembership.createIndexes(), PoolClusterLock.createIndexes()]);
 
   // Start autonomous pool locking background worker
   startPoolWorker({ intervalMs: 30000 });

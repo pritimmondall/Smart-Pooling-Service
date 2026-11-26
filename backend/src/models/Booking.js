@@ -78,6 +78,11 @@ const bookingSchema = new mongoose.Schema(
       enum: BOOKING_STATUSES,
       default: 'pending',
     },
+    confirmedMaxFare: { type: Number, min: 0 },
+    confirmationSelection: String,
+    dispatchDueAt: Date,
+    waitingSince: Date,
+    departedAt: Date,
     closingPriceLimit: { type: Number, min: 0 },
     acceptedShift: {
       originalStart: Date, originalEnd: Date, acceptedAt: Date,

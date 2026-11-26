@@ -1,5 +1,5 @@
 import { ServicePool, Booking, Notification } from '../../models/index.js';
-import { AUTO_POOL_FORMATION_MS, settleClosingLimits } from './matching.service.js';
+import { settleClosingLimits } from './matching.service.js';
 import { runInTransaction } from '../../config/db.js';
 
 /**
@@ -23,11 +23,8 @@ export async function lockEligiblePools({
   // 1. Query all forming pools whose lockCutoffTime has passed
   const due = {
     status: 'forming',
-    $or: [
-      { lockCutoffTime: { $lte: now } },
-      // Include automatic pools created before the four-minute cutoff was introduced.
-      { automaticDispatch: true, createdAt: { $lte: new Date(+now - AUTO_POOL_FORMATION_MS) } },
-    ],
+    automaticDispatch: { $ne: true },
+    lockCutoffTime: { $lte: now },
   };
   const expiredPools = await ServicePool.find(due);
 
@@ -87,6 +84,7 @@ export async function lockEligiblePools({
 
   // 2. Recovery Pass: Identify any locked pools where notifications were not completed
   const unnotifiedLockedPools = await ServicePool.find({
+    automaticDispatch: { $ne: true },
     status: 'locked',
     notificationsDispatched: { $ne: true },
   });
